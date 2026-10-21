@@ -1,0 +1,22 @@
+{
+  "input": "/mnt/nas/workspace/team_innov/26pj055-b_NIKL/data/19outlets_200ea(1002)/reports/07_4_refine/강원일보/corpus.jsonl",
+  "n": 15,
+  "n_needs_review": 1,
+  "n_alignment_failed": 0,
+  "n_span_corrupted": 1,
+  "output_files": {
+    "corpus": "/mnt/nas/workspace/team_innov/26pj055-b_NIKL/data/19outlets_200ea(1002)/ner/reports/강원일보/corpus.jsonl",
+    "documents_meta": "/mnt/nas/workspace/team_innov/26pj055-b_NIKL/data/19outlets_200ea(1002)/ner/reports/강원일보/documents_meta.jsonl",
+    "review_needed": "/mnt/nas/workspace/team_innov/26pj055-b_NIKL/data/19outlets_200ea(1002)/ner/reports/강원일보/review_needed.jsonl",
+    "corpus_4_ner_tagged": {
+      "강원일보": "/mnt/nas/workspace/team_innov/26pj055-b_NIKL/data/19outlets_200ea(1002)/ner/outputs/corpus_4_ner_tagged/강원일보.json"
+    }
+  },
+  "stats": {
+    "n": 15,
+    "total_sec": 219.16782954521477,
+    "mean_sec": 14.611188636347652,
+    "min_sec": 6.577022902667522,
+    "max_sec": 32.895120315253735
+  }
+}
