@@ -24,7 +24,7 @@ LOG_FILE = BASE_DIR / "ner_reviewer.log"
 # * OPENROUTER: openai/gpt-4.1, openai/gpt-5.1, openai/gpt-5.2, openai/gpt-5.4, anthropic/claude-sonnet-5.5, anthropic/claude-haiku-5.5
 # ***************************************************
 API_PROVIDER = "OPENROUTER"
-MODEL_NAME = "gpt-4.1"
+MODEL_NAME = "openai/gpt-4.1"
 
 if API_PROVIDER == "OPENAI":
     API_KEY = os.getenv("SELECTSTART_OPENAI_API_KEY")
@@ -60,8 +60,10 @@ SYSTEM_PROMPT = "\n\n".join([
 # ***************************************************
 # * 출력(LLM 검수 결과) 스키마
 # * 최종 출력 구조는 후처리에서 생성
-# * 오류유형_LV1 : 오태깅, 범위오류, 태그오류, 태깅누락, 기타
-# * 오류유형_LV2 : 범위확장, 범위축소, 태깅분리, 태깅병합
+# * ERROR_LV1: tagging_error = 태그오류, tagging_wrong = 오태깅, 
+# *            tagging_miss = 태깅누락, span_error = 범위오류, etc = 기타
+# * ERROR_LV2: span_expansion = 범위확장, span_reduction = 범위축소, 
+# *            span_tagging_split = 태깅분리, span_tagging_merge = 태깅병합
 # ***************************************************
 ERROR_LV1 = [
     "tagging_error",
