@@ -12,10 +12,20 @@ from openai import OpenAI
 from dotenv import load_dotenv
 load_dotenv()
 
+from error_case_retriever import ERROR_LV1, ERROR_LV2
+from error_case_retriever import load_error_cases, split_reviewed_sentences, convert_reviewed_cases, select_representative_cases, format_representative_cases
+
 BASE_DIR = Path(__file__).resolve().parent
+ANALYSIS_DIR = BASE_DIR / "analysis"
+OUTPUT_DIR = BASE_DIR / "outputs"
+DATA_ROOT = BASE_DIR / "data"
+
+DATA_VERSION = "poc_2610241558"
+DATA_DIR = DATA_ROOT / DATA_VERSION
+ID_DIR = DATA_DIR / "id"
+
+ERROR_CASES_FILE = ANALYSIS_DIR / "NER_개체명검수오류목록_v1.xlsx"
 PROMPT_DIR = BASE_DIR / "prompts"
-INPUT_FILE = BASE_DIR / "data" / "강원일보.json"
-OUTPUT_FILE = BASE_DIR / "outputs" / "강원일보.jsonl"
 LOG_FILE = BASE_DIR / "ner_reviewer.log"
 
 # ***************************************************
@@ -39,6 +49,7 @@ client = OpenAI(
     api_key=API_KEY,
     **({"base_url": BASE_URL} if BASE_URL else {}),
 )
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s", handlers=[logging.FileHandler(LOG_FILE, encoding="utf-8"), logging.StreamHandler()])
 
 # ***************************************************
@@ -46,7 +57,6 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 # * 공통 원칙: all.txt
 # * 태그별 규칙: {tag}.txt
 # * 예외 사항: {excepts}.txt
-# * 오류 유형별 규칙: 미작성
 # ***************************************************
 read_prompt = lambda path: path.read_text(encoding="utf-8-sig").strip()
 
@@ -59,27 +69,7 @@ SYSTEM_PROMPT = "\n\n".join([
 
 # ***************************************************
 # * 출력(LLM 검수 결과) 스키마
-# * 최종 출력 구조는 후처리에서 생성
-# * ERROR_LV1: tagging_error = 태그오류, tagging_wrong = 오태깅, 
-# *            tagging_miss = 태깅누락, span_error = 범위오류, etc = 기타
-# * ERROR_LV2: span_expansion = 범위확장, span_reduction = 범위축소, 
-# *            span_tagging_split = 태깅분리, span_tagging_merge = 태깅병합
 # ***************************************************
-ERROR_LV1 = [
-    "tagging_error",
-    "tagging_wrong",
-    "tagging_miss",
-    "span_error",
-    "etc",
-]
-
-ERROR_LV2 = [
-    "span_expansion",
-    "span_reduction",
-    "span_tagging_split",
-    "span_tagging_merge"
-]
-
 REVIEW_SCHEMA = {
     "type": "object",
     "properties": {
@@ -105,35 +95,67 @@ RESPONSE_SCHEMA = {
 }
 
 # ***************************************************
-# * 기사별 검수 및 LLM 결과 저장(JSONL)
-# * 입력 형식: [문장 ID] 기존 태깅 문장
-# * 입력 단위: 기사 (article : ner 태깅된 corpus4 json 파일)
+# * LLM 검수 & 결과 저장
+# * 입력 형식: 문장ID, 문장텍스트, 검수상태, 대표사례
+# * 출력 형식: 문장ID, 대상문장, 수정문장, 오류유형1, 오류유형2, 검수사유, 추가검수필요여부
+# * - 검수대상 문장이 없으면 LLM 검수를 실행하지 않고 기존검수결과 저장
+# * 입력 단위: 문서(document) 단위
+# * 출력 단위: 문서(document) 단위
+# * 출력 파일명: {언론사}.jsonl
+# * - article : ner 태깅된 corpus4 json 파일
 # ***************************************************
-article = json.loads(INPUT_FILE.read_text(encoding="utf-8-sig"))
+article_files = sorted(DATA_DIR.glob("*.json"))
+error_cases = load_error_cases(ERROR_CASES_FILE)
 
-with OUTPUT_FILE.open("w", encoding="utf-8") as f:
-    for document in article["document"]:
-        sentences = [{"sentence_id": sentence["id"], "text": sentence["form"]} for paragraph in document["paragraph"] for sentence in paragraph["sentence"]]
-        article_input = (
-            "다음은 개체명 태깅 검수 대상 기사입니다.\n\n"
-            + "\n".join(f"[{sentence['sentence_id']}] {sentence['text']}" for sentence in sentences)
-        )
-        response = client.responses.create(
-            model=MODEL_NAME,
-            instructions=SYSTEM_PROMPT,
-            input=article_input,
-            text={
-                "format": {
-                    "type": "json_schema",
-                    "name": "ner_error_type_response",
-                    "strict": True,
-                    "schema": RESPONSE_SCHEMA,
-                }
-            },
-        )
+for input_file in article_files:
 
-        result = json.loads(response.output_text)
-        f.write(json.dumps({"doc_id": document["id"], "provider": API_PROVIDER, "model": MODEL_NAME, "result": result,}, ensure_ascii=False) + "\n")
-        logging.info(f"검수완료: {document['id']}")
+    id_file = ID_DIR / input_file.name
+    output_file = OUTPUT_DIR / f"{input_file.stem}.jsonl"
+    article = json.loads(input_file.read_text(encoding="utf-8-sig"))
+    review_status = split_reviewed_sentences(input_file, id_file, error_cases)
 
-logging.info(f"결과저장완료: {OUTPUT_FILE}")
+    with output_file.open("w", encoding="utf-8") as f:
+        for document in article["document"]:
+            sentences = [{"sentence_id": sentence["id"], "text": sentence["form"]} for paragraph in document["paragraph"] for sentence in paragraph["sentence"]]
+            document_status = review_status[document["id"]]
+            reviewed_ids = {item["sentence_id"] for item in document_status["reviewed"]}
+            
+            # 미검수 문장과 유사한 대표사례 선택
+            selected_cases = select_representative_cases(document_status["unreviewed"], error_cases)
+            article_input = (
+                "다음은 개체명 태깅 검수 대상 기사입니다.\n\n"
+                + "\n".join(
+                    f"[{('기존검수완료 - 결과유지' if sentence['sentence_id'] in reviewed_ids else '신규검수대상')}] "
+                    f"[{sentence['sentence_id']}] {sentence['text']}"
+                    for sentence in sentences
+                )
+            )
+            article_input += "\n\n" + format_representative_cases(selected_cases)
+
+            # 미검수 문장이 있을 때만 LLM 검수 실행
+            if document_status["unreviewed"]:
+                response = client.responses.create(
+                    model=MODEL_NAME,
+                    instructions=SYSTEM_PROMPT,
+                    input=article_input,
+                    text={
+                        "format": {
+                            "type": "json_schema",
+                            "name": "ner_error_type_response",
+                            "strict": True,
+                            "schema": RESPONSE_SCHEMA,
+                        }
+                    }
+                )
+                llm_reviews = json.loads(response.output_text)["reviews"]
+                # 기존검수문장에 대한 LLM 결과 제외
+                llm_reviews = [review for review in llm_reviews if review["sentence_id"] not in reviewed_ids]
+            else:
+                llm_reviews = []
+
+            # 저장
+            result = {"reviews": convert_reviewed_cases(document_status["reviewed"]) + llm_reviews}
+            f.write(json.dumps({"doc_id": document["id"], "provider": API_PROVIDER, "model": MODEL_NAME, "result": result,}, ensure_ascii=False) + "\n")
+            logging.info(f"검수완료: {document['id']}")
+
+    logging.info(f"결과저장완료: {output_file}")
