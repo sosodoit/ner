@@ -3,6 +3,7 @@
 temp/
 data/
 outputs/
+analysis/
 .vscode/
 
 ### Python ###
