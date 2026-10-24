@@ -3,6 +3,7 @@
 temp/
 data/
 outputs/
+.vscode/
 
 ### Python ###
 # Byte-compiled / optimized / DLL files
