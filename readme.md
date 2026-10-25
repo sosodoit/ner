@@ -20,9 +20,11 @@ ner/
 │       ├── multilingual.txt
 │       └── parentheses.txt
 ├── .env
+├── upload_to_bigquery.log
 ├── extract_target_data.log
 ├── error_case_retriever.log
 ├── ner_reviewer.log
+├── upload_to_bigquery.py
 ├── extract_target_data.py
 ├── error_case_retriever.py
 └── ner_reviewer.py
