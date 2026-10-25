@@ -4,6 +4,7 @@ ner/
 ├── data/
 ├── outputs/
 ├── analysis/
+├── private/
 ├── prompts/
 │   ├── system_prompt.txt
 │   ├── all.txt
@@ -141,6 +142,11 @@ outputs 폴더 구조
 - 환경변수 설정
 
     ```env
-    OPENAI_API_KEY = your_api_key
-    OPENROUTER = your_api_key
+    OPENAI_API_KEY = ""
+    OPENROUTER = ""
+
+    GOOGLE_APPLICATION_CREDENTIALS = ""
+    GCP_PROJECT_ID = ""
+    GCP_DATASET_ID = ""
+    GCP_TABLE_NAME = ""
     ```

@@ -3,6 +3,7 @@
 temp/
 data/
 outputs/
+private/
 analysis/
 .vscode/
 
