@@ -1,8 +1,8 @@
 ---
-name: Custom issue template
+name: Feature issue template
 about: Describe this issue template's purpose here.
-title: "[feat] 작업 내용"
-labels: docs
+title: "[Feat] 작업 내용"
+labels: feat
 assignees: sosodoit
 
 ---
