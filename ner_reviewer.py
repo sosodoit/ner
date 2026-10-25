@@ -7,8 +7,9 @@
 import os
 import json
 import logging
-from pathlib import Path
 from openai import OpenAI
+from pathlib import Path
+from datetime import datetime
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -17,14 +18,14 @@ from error_case_retriever import load_error_cases, split_reviewed_sentences, con
 
 BASE_DIR = Path(__file__).resolve().parent
 ANALYSIS_DIR = BASE_DIR / "analysis"
-OUTPUT_DIR = BASE_DIR / "outputs"
 DATA_ROOT = BASE_DIR / "data"
 
-DATA_VERSION = "poc_2610241558"
+DATA_VERSION = "poc_2610251825"
 DATA_DIR = DATA_ROOT / DATA_VERSION
 ID_DIR = DATA_DIR / "id"
+OUTPUT_DIR = BASE_DIR / "outputs" / f"{DATA_VERSION}_{datetime.now().strftime('%y%m%d%H%M')}"
 
-ERROR_CASES_FILE = ANALYSIS_DIR / "NER_개체명검수오류목록_v1.xlsx"
+ERROR_CASES_FILE = ANALYSIS_DIR / "NER_개체명검수이력.xlsx"
 PROMPT_DIR = BASE_DIR / "prompts"
 LOG_FILE = BASE_DIR / "ner_reviewer.log"
 
@@ -106,6 +107,7 @@ RESPONSE_SCHEMA = {
 # ***************************************************
 article_files = sorted(DATA_DIR.glob("*.json"))
 error_cases = load_error_cases(ERROR_CASES_FILE)
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 for input_file in article_files:
 
