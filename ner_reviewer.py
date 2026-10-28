@@ -7,9 +7,10 @@
 import os
 import json
 import logging
-from openai import OpenAI
-from pathlib import Path
+from zoneinfo import ZoneInfo
 from datetime import datetime
+from pathlib import Path
+from openai import OpenAI
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -20,10 +21,11 @@ BASE_DIR = Path(__file__).resolve().parent
 ANALYSIS_DIR = BASE_DIR / "analysis"
 DATA_ROOT = BASE_DIR / "data"
 
-DATA_VERSION = "poc_2610251825"
+DATA_VERSION = "poc_20261027_194000"
 DATA_DIR = DATA_ROOT / DATA_VERSION
 ID_DIR = DATA_DIR / "id"
-OUTPUT_DIR = BASE_DIR / "outputs" / f"{DATA_VERSION}_{datetime.now().strftime('%y%m%d%H%M')}"
+RUN_ID = f"run_{datetime.now(ZoneInfo('Asia/Seoul')).strftime('%Y%m%d_%H%M%S')}"
+OUTPUT_DIR = BASE_DIR / "outputs" / DATA_VERSION / RUN_ID
 
 ERROR_CASES_FILE = ANALYSIS_DIR / "NER_개체명검수이력.xlsx"
 PROMPT_DIR = BASE_DIR / "prompts"
@@ -35,7 +37,7 @@ LOG_FILE = BASE_DIR / "ner_reviewer.log"
 # * OPENROUTER: openai/gpt-4.1, openai/gpt-5.1, openai/gpt-5.2, openai/gpt-5.4, anthropic/claude-sonnet-5.5, anthropic/claude-haiku-5.5
 # ***************************************************
 API_PROVIDER = "OPENROUTER"
-MODEL_NAME = "openai/gpt-4.1"
+MODEL_NAME = "anthropic/claude-sonnet-5.5"
 
 if API_PROVIDER == "OPENAI":
     API_KEY = os.getenv("SELECTSTART_OPENAI_API_KEY")
@@ -75,14 +77,15 @@ REVIEW_SCHEMA = {
     "type": "object",
     "properties": {
         "sentence_id": {"type": "string"},        
-        "target_span": {"type": "string"},
-        "corrected_span": {"type": "string"},
-        "error_lv1": {"type": "string", "enum": ERROR_LV1},
+        "review_status": {"type": "string", "enum": ["error", "normal"]},
+        "target_span": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+        "corrected_span": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+        "error_lv1": {"anyOf": [{"type": "string", "enum": ERROR_LV1}, {"type": "null"}]},
         "error_lv2": {"anyOf": [{"type": "string", "enum": ERROR_LV2},{"type": "null"}]},
         "reason": {"type": "string"},
         "review_needed": {"type": "boolean"},
     },
-    "required": ["sentence_id", "target_span", "corrected_span", "error_lv1", "error_lv2", "reason", "review_needed"],
+    "required": ["sentence_id", "review_status", "target_span", "corrected_span", "error_lv1", "error_lv2", "reason", "review_needed"],
     "additionalProperties": False,
 }
 
@@ -154,6 +157,21 @@ for input_file in article_files:
                 llm_reviews = [review for review in llm_reviews if review["sentence_id"] not in reviewed_ids]
             else:
                 llm_reviews = []
+
+            # LLM이 오류 결과를 반환하지 않은 문장은 정상으로 기록
+            returned_sentence_ids = {review["sentence_id"] for review in llm_reviews}
+            for sentence in document_status["unreviewed"]:
+                if sentence["sentence_id"] not in returned_sentence_ids:
+                    llm_reviews.append({
+                        "sentence_id": sentence["sentence_id"],
+                        "review_status": "normal",
+                        "target_span": None,
+                        "corrected_span": None,
+                        "error_lv1": None,
+                        "error_lv2": None,
+                        "reason": "오류 없음",
+                        "review_needed": False,
+                    })
 
             # 저장
             result = {"reviews": convert_reviewed_cases(document_status["reviewed"]) + llm_reviews}

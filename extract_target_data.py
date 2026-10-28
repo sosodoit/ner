@@ -7,6 +7,7 @@
 import json
 import logging
 import argparse
+from zoneinfo import ZoneInfo
 from datetime import datetime
 from pathlib import Path
 
@@ -56,7 +57,8 @@ def main():
     args = parser.parse_args()
 
     # 출력 경로 설정
-    output_dir = BASE_DIR / "data" / f"{args.output_name}_{datetime.now().strftime('%y%m%d%H%M')}"
+    output_data_version = f"{args.output_name}_{datetime.now(ZoneInfo('Asia/Seoul')).strftime('%Y%m%d_%H%M%S')}"
+    output_dir = BASE_DIR / "data" / output_data_version
     mapping_dir = output_dir / "id"
     output_dir.mkdir(parents=True, exist_ok=True)
     mapping_dir.mkdir(exist_ok=True)

@@ -6,13 +6,14 @@
 # ***************************************************
 import os
 import json
-import hashlib
 import argparse
 import logging
 import tempfile
-from dotenv import load_dotenv
-from pathlib import Path
 from google.cloud import bigquery
+from zoneinfo import ZoneInfo
+from datetime import datetime
+from pathlib import Path
+from dotenv import load_dotenv
 
 # ***************************************************
 # * 설정
@@ -33,19 +34,21 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 # * 테이블 스키마
 # ***************************************************
 SCHEMA = [
-    bigquery.SchemaField("row_key", "STRING"),
     bigquery.SchemaField("run_folder", "STRING"),
-    bigquery.SchemaField("publisher", "STRING"),
-    bigquery.SchemaField("doc_id", "STRING"),
     bigquery.SchemaField("provider", "STRING"),
     bigquery.SchemaField("model", "STRING"),
+    bigquery.SchemaField("publisher", "STRING"),
+    bigquery.SchemaField("doc_id", "STRING"),
     bigquery.SchemaField("sentence_id", "STRING"),
+    bigquery.SchemaField("review_id", "INT64"),
+    bigquery.SchemaField("review_status", "STRING"),
     bigquery.SchemaField("target_span", "STRING"),
     bigquery.SchemaField("corrected_span", "STRING"),
     bigquery.SchemaField("error_lv1", "STRING"),
     bigquery.SchemaField("error_lv2", "STRING"),
     bigquery.SchemaField("reason", "STRING"),
     bigquery.SchemaField("review_needed", "BOOL"),
+    bigquery.SchemaField("load_dt", "DATE"),
 ]
 
 # ***************************************************
@@ -68,35 +71,39 @@ def iter_json_objects(file_path):
 
 
 def flatten_reviews(file_path):
-    run_folder = file_path.parent.name
+    run_dir = file_path.parent
+    if run_dir.name.startswith("run_"):
+        run_folder = f"{run_dir.parent.name}/{run_dir.name}"
+    else:
+        run_folder = run_dir.name
     publisher = file_path.stem
+    load_dt = datetime.now(ZoneInfo("Asia/Seoul")).date().isoformat()
+    review_counts = {}
 
     for article_idx, article in enumerate(iter_json_objects(file_path)):
         reviews = article.get("result", {}).get("reviews", [])
 
-        for review_idx, review in enumerate(reviews):
-            identity = (
-                f"{run_folder}|{publisher}|"
-                f"{article.get('doc_id', '')}|"
-                f"{article_idx}|{review_idx}"
-            )
-
-            row_key = hashlib.sha256(identity.encode("utf-8")).hexdigest()
+        for review in reviews:
+            sentence_id = review.get("sentence_id")
+            review_key = (article.get("doc_id"), sentence_id)
+            review_counts[review_key] = review_counts.get(review_key, 0) + 1
 
             yield {
-                "row_key": row_key,
                 "run_folder": run_folder,
-                "publisher": publisher,
-                "doc_id": article.get("doc_id"),
                 "provider": article.get("provider"),
                 "model": article.get("model"),
-                "sentence_id": review.get("sentence_id"),
+                "publisher": publisher,
+                "doc_id": article.get("doc_id"),
+                "sentence_id": sentence_id,
+                "review_id": review_counts[review_key],
+                "review_status": review.get("review_status", "error"),
                 "target_span": review.get("target_span"),
                 "corrected_span": review.get("corrected_span"),
                 "error_lv1": review.get("error_lv1"),
                 "error_lv2": review.get("error_lv2"),
                 "reason": review.get("reason"),
                 "review_needed": review.get("review_needed", False),
+                "load_dt": load_dt,
             }
 
 
@@ -139,10 +146,10 @@ def upload_file(file_path, client, table_id):
 # ***************************************************
 def main():
     parser = argparse.ArgumentParser(description="NER 검수 결과 BigQuery 적재")
-    parser.add_argument("data_version", help="적재할 outputs 하위 데이터 버전 폴더명")
+    parser.add_argument("run_path", help="적재할 outputs 하위 경로 (예: poc_20261027_194000/run_20261028_132100)")
 
     args = parser.parse_args()
-    run_dir = OUTPUT_DIR / args.data_version
+    run_dir = OUTPUT_DIR / args.run_path
 
     client = bigquery.Client(project=PROJECT_ID)
     table_id = f"{PROJECT_ID}.{DATASET_ID}.{TABLE_NAME}"

@@ -103,6 +103,7 @@ def convert_reviewed_cases(reviewed):
             reason = "\n".join(filter(None, [row.get("검수의견", ""), row.get("검수의견상세", "")]))
             reviews.append({
                 "sentence_id": item["sentence_id"],
+                "review_status": "error",
                 "target_span": row.get("현재태깅", ""),
                 "corrected_span": row.get("정답태깅", ""),
                 "error_lv1": ERROR_LV1_MAP.get(row.get("오류유형_LV1", ""), "etc"),
