@@ -51,9 +51,9 @@ TAG_CONFUSION_MAP = {
 # * OPENAI: gpt-4.1, gpt-5.1, gpt-5.2, gpt-5.4
 # * OPENROUTER: openai/gpt-4.1, openai/gpt-5.1, openai/gpt-5.2, openai/gpt-5.4, anthropic/claude-sonnet-5.5, anthropic/claude-haiku-5.5
 # ***************************************************
-DATA_VERSION = "poc_20261029_194000"
-API_PROVIDER = "OPENAI"
-MODEL_NAME = "gpt-4.1"
+DATA_VERSION = os.getenv("DATA_VERSION", "poc_20261029_194000")
+API_PROVIDER = os.getenv("API_PROVIDER", "OPENAI")
+MODEL_NAME = os.getenv("MODEL_NAME", "gpt-4.1")
 
 # ***************************************************
 # * 프롬프트
