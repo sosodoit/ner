@@ -29,6 +29,9 @@
 5. 오류가 있으면 수정 구간과 수정 태깅 작성
 6. 오류가 없으면 정상 결과 작성
 7. 판단 또는 수정안이 불확실하면 `review_needed: true` 설정
+8. `reason`은 오류라고 판단한 핵심 이유만 명사형으로 100자 이내 작성
+9. `reason`에 판단 과정, 장황한 설명, 검증항목 목록을 포함하지 않음
+10. 정상 결과의 `reason`은 `오류 없음`으로 작성
 
 ## 4. 수정 구간
 
@@ -47,6 +50,7 @@
 - 오류: `review_status: "error"`
 - 오류 없음: `review_status: "normal"`
 - 정상 결과의 `target_span`, `corrected_span`, `error_lv1`, `error_lv2`: `null`
+- 정상 결과의 `reason`: `오류 없음`
 - 불확실한 오류·수정안: 근거 기록 및 `review_needed: true`
 - 입력 문장마다 하나 이상의 검수 결과 반환
 - 문장 ID를 입력값과 일치시킴

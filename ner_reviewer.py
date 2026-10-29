@@ -117,6 +117,7 @@ RESPONSE_SCHEMA = {
     "additionalProperties": False,
 }
 
+
 # ***************************************************
 # * LLM 검수 & 결과 저장
 # * 입력 단위: 문서(document) 단위
