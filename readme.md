@@ -16,7 +16,6 @@ ner/
 │   ├── ev.txt
 │   └── exception/
 │       ├── common.txt
-│       ├── lean_word.txt
 │       ├── multilingual.txt
 │       └── parentheses.txt
 ├── .env

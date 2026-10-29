@@ -88,6 +88,18 @@ def flatten_reviews(file_path):
             review_key = (article.get("doc_id"), sentence_id)
             review_counts[review_key] = review_counts.get(review_key, 0) + 1
 
+            review_status = review.get("review_status", "error")
+            if review_status == "normal":
+                target_span = None
+                corrected_span = None
+                error_lv1 = None
+                error_lv2 = None
+            else:
+                target_span = review.get("target_span")
+                corrected_span = review.get("corrected_span")
+                error_lv1 = review.get("error_lv1")
+                error_lv2 = review.get("error_lv2")
+
             yield {
                 "run_folder": run_folder,
                 "provider": article.get("provider"),
@@ -96,11 +108,11 @@ def flatten_reviews(file_path):
                 "doc_id": article.get("doc_id"),
                 "sentence_id": sentence_id,
                 "review_id": review_counts[review_key],
-                "review_status": review.get("review_status", "error"),
-                "target_span": review.get("target_span"),
-                "corrected_span": review.get("corrected_span"),
-                "error_lv1": review.get("error_lv1"),
-                "error_lv2": review.get("error_lv2"),
+                "review_status": review_status,
+                "target_span": target_span,
+                "corrected_span": corrected_span,
+                "error_lv1": error_lv1,
+                "error_lv2": error_lv2,
                 "reason": review.get("reason"),
                 "review_needed": review.get("review_needed", False),
                 "load_dt": load_dt,

@@ -5,7 +5,6 @@
 # * 설명: NER 검수 오류 사례 선별 및 프롬프트 변환
 # ***************************************************
 import re
-import json
 import logging
 import pandas as pd
 from pathlib import Path
@@ -119,35 +118,6 @@ def format_mistag_references(text, dictionary):
     ])
 
 # ***************************************************
-# * 기존검수문장과 미검수문장 분리
-# * - reviewed: 기존검수문장, unreviewed: 미검수문장
-# ***************************************************
-def split_reviewed_sentences(article_file, id_file, cases):
-    # ID 파일에서 데이터버전 확인
-    id_rows = json.loads(Path(id_file).read_text(encoding="utf-8-sig"))
-    document_versions = {row["document_id"]: row["data_version"] for row in id_rows}
-    article = json.loads(Path(article_file).read_text(encoding="utf-8-sig"))
-    result = {}
-
-    # 검수대상문장이 기존검수결과에 있는지 확인
-    for document in article["document"]:
-        document_id = document["id"]
-        version = document_versions.get(document_id, "")
-        reviewed = []
-        unreviewed = []
-        for paragraph in document["paragraph"]:
-            for sentence in paragraph["sentence"]:
-                key = (version, document_id, sentence["id"])
-                if key in cases:
-                    reviewed.append({"sentence_id": sentence["id"], "case": cases[key]})
-                else:
-                    unreviewed.append({"sentence_id": sentence["id"], "text": sentence["form"]})
-        result[document_id] = {"reviewed": reviewed, "unreviewed": unreviewed}
-        retriever_logger.info(f"검수상태 분리완료: {document_id} | 기존검수={len(reviewed)} | 미검수={len(unreviewed)}")
-
-    return result
-
-# ***************************************************
 # * 기존 검수결과의 출력 형식 변환
 # * - REVIEW_SCHEMA의 reviews 형식으로 변환
 # ***************************************************
@@ -208,10 +178,10 @@ def _tokenize(text):
         tokens.add(f"<tag:{tag.lower()}>")
     return tokens
 
-def select_representative_cases(unreviewed, cases, limit=2):
+def select_representative_cases(sentences, cases, limit=2):
     targets = [
         (sentence["sentence_id"], _tokenize(sentence["text"]))
-        for sentence in unreviewed
+        for sentence in sentences
     ]
 
     # 공통토큰이 있는 대표사례만 비교하도록 토큰 색인 추가
@@ -256,5 +226,5 @@ def select_representative_cases(unreviewed, cases, limit=2):
             "case": case,
         })
 
-    retriever_logger.info(f"대표사례 선택완료: 미검수={len(unreviewed)} | 선택={len(selected)}")
+    retriever_logger.info(f"대표사례 선택완료: 대상문장={len(sentences)} | 선택={len(selected)}")
     return selected

@@ -16,7 +16,7 @@ from openai import OpenAI
 from dotenv import load_dotenv
 
 from error_case_retriever import ERROR_LV1, ERROR_LV2
-from error_case_retriever import load_error_cases, split_reviewed_sentences, convert_reviewed_cases, select_representative_cases, format_representative_cases
+from error_case_retriever import load_error_cases, select_representative_cases, format_representative_cases
 from error_case_retriever import load_mistag_dictionary, format_mistag_references
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -143,7 +143,6 @@ def main():
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s", handlers=[logging.FileHandler(LOG_FILE, encoding="utf-8"), logging.StreamHandler()])
 
     data_dir = DATA_ROOT / args.data_version
-    id_dir = data_dir / "id"
     run_id = f"run_{datetime.now(ZoneInfo('Asia/Seoul')).strftime('%Y%m%d_%H%M%S')}"
     output_dir = BASE_DIR / "outputs" / args.data_version / run_id
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -153,11 +152,8 @@ def main():
     mistag_dictionary = load_mistag_dictionary(ERROR_CASES_FILE)
 
     for input_file in article_files:
-        id_file = id_dir / input_file.name
         output_file = output_dir / f"{input_file.stem}.jsonl"
         article = json.loads(input_file.read_text(encoding="utf-8-sig"))
-        review_status = split_reviewed_sentences(input_file, id_file, error_cases)
-
         with output_file.open("w", encoding="utf-8") as f:
             for document in article["document"]:
                 sentences = [
@@ -165,14 +161,10 @@ def main():
                     for paragraph in document["paragraph"]
                     for sentence in paragraph["sentence"]
                 ]
-                document_status = review_status[document["id"]]
-                reviewed_ids = {item["sentence_id"] for item in document_status["reviewed"]}
-
-                selected_cases = select_representative_cases(document_status["unreviewed"], error_cases)
+                selected_cases = select_representative_cases(sentences, error_cases)
                 article_input = (
                     "다음은 개체명 태깅 검수 대상 기사입니다.\n\n"
                     + "\n".join(
-                        f"[{('기존검수완료 - 결과유지' if sentence['sentence_id'] in reviewed_ids else '신규검수대상')}] "
                         f"[{sentence['sentence_id']}] {sentence['text']}"
                         for sentence in sentences
                     )
@@ -189,7 +181,7 @@ def main():
                     f"fallback={prompt_fallback} | 대표사례={len(selected_cases)}"
                 )
 
-                if document_status["unreviewed"]:
+                try:
                     response = client.responses.create(
                         model=MODEL_NAME,
                         instructions=system_prompt,
@@ -204,25 +196,27 @@ def main():
                         },
                     )
                     llm_reviews = json.loads(response.output_text)["reviews"]
-                    llm_reviews = [review for review in llm_reviews if review["sentence_id"] not in reviewed_ids]
-                else:
-                    llm_reviews = []
+                except Exception as exc:
+                    logging.error(f"LLM 검수 실패: {document['id']} | {exc} | 다음 문서로 진행")
+                    continue
 
                 returned_sentence_ids = {review["sentence_id"] for review in llm_reviews}
-                for sentence in document_status["unreviewed"]:
+                sentence_ids = {sentence["sentence_id"] for sentence in sentences}
+                for sentence in sentences:
                     if sentence["sentence_id"] not in returned_sentence_ids:
                         llm_reviews.append({
                             "sentence_id": sentence["sentence_id"],
-                            "review_status": "normal",
+                            "review_status": "error",
                             "target_span": None,
                             "corrected_span": None,
                             "error_lv1": None,
                             "error_lv2": None,
-                            "reason": "오류 없음",
-                            "review_needed": False,
+                            "reason": "LLM 검수 결과 누락",
+                            "review_needed": True,
                         })
 
-                result = {"reviews": convert_reviewed_cases(document_status["reviewed"]) + llm_reviews}
+                llm_reviews = [review for review in llm_reviews if review["sentence_id"] in sentence_ids]
+                result = {"reviews": llm_reviews}
                 f.write(json.dumps({"doc_id": document["id"], "provider": API_PROVIDER, "model": MODEL_NAME, "result": result}, ensure_ascii=False) + "\n")
                 logging.info(f"검수완료: {document['id']}")
 
