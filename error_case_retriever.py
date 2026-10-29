@@ -63,6 +63,61 @@ def load_error_cases(error_file):
     retriever_logger.info(f"오류사례 로드완료: 전체행={total_rows} | 오류행={len(error_list)} | 문장사례={len(cases)}")
     return cases
 
+
+# ***************************************************
+# * 오태깅 사전 생성
+# * - 동일한 (현재 태그, 현재 태깅 개체명)을 하나로 묶음
+# * - 문장과 검수의견은 대표 문맥 최대 2건만 보관
+# ***************************************************
+MISTAG_ENTITY_PATTERN = re.compile(r"<([^:>]+):\s*(PS|EV|OG|LC|AF|DT)>", re.IGNORECASE)
+
+
+def load_mistag_dictionary(error_file, context_limit=2):
+    error_list = pd.read_excel(error_file, sheet_name="오류목록", dtype=str).fillna("")
+    error_list = error_list[error_list["오류유형_LV1"].str.strip() == "오태깅"]
+    dictionary = defaultdict(lambda: defaultdict(lambda: {"count": 0, "contexts": []}))
+
+    for row in error_list.to_dict("records"):
+        reason = "\n".join(filter(None, [row.get("검수의견", ""), row.get("검수의견상세", "")]))
+        matches = MISTAG_ENTITY_PATTERN.findall(row.get("현재태깅", ""))
+        for surface, tag in matches:
+            entry = dictionary[tag.upper()][surface]
+            entry["count"] += 1
+            context = {"form": row.get("form", ""), "reason": reason}
+            if context not in entry["contexts"] and len(entry["contexts"]) < context_limit:
+                entry["contexts"].append(context)
+
+    return {
+        tag: dict(surface_entries)
+        for tag, surface_entries in dictionary.items()
+    }
+
+
+def format_mistag_references(text, dictionary):
+    matched = {
+        (tag.upper(), surface)
+        for surface, tag in MISTAG_ENTITY_PATTERN.findall(text)
+        if surface and tag.upper() in dictionary
+    }
+    lines = []
+    for tag, surface in sorted(matched):
+        entry = dictionary.get(tag, {}).get(surface)
+        if not entry:
+            continue
+        lines.append(f"- 현재 태깅: <{surface}: {tag}> / 과거 오태깅 검수 {entry['count']}건")
+        for context in entry["contexts"]:
+            lines.append(f"  문맥: {context['form']}")
+            if context["reason"]:
+                lines.append(f"  검수의견: {context['reason']}")
+
+    if not lines:
+        return ""
+    return "\n".join([
+        "[오태깅 참고자료 - 참고용]",
+        "동일 표현의 과거 오태깅 사례이며, 현재 문장의 실제 문맥을 우선하여 판단하세요.",
+        *lines,
+    ])
+
 # ***************************************************
 # * 기존검수문장과 미검수문장 분리
 # * - reviewed: 기존검수문장, unreviewed: 미검수문장

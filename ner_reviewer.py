@@ -17,6 +17,7 @@ from dotenv import load_dotenv
 
 from error_case_retriever import ERROR_LV1, ERROR_LV2
 from error_case_retriever import load_error_cases, split_reviewed_sentences, convert_reviewed_cases, select_representative_cases, format_representative_cases
+from error_case_retriever import load_mistag_dictionary, format_mistag_references
 
 BASE_DIR = Path(__file__).resolve().parent
 DATA_ROOT = BASE_DIR / "data"
@@ -50,9 +51,9 @@ TAG_CONFUSION_MAP = {
 # * OPENAI: gpt-4.1, gpt-5.1, gpt-5.2, gpt-5.4
 # * OPENROUTER: openai/gpt-4.1, openai/gpt-5.1, openai/gpt-5.2, openai/gpt-5.4, anthropic/claude-sonnet-5.5, anthropic/claude-haiku-5.5
 # ***************************************************
-DATA_VERSION = "poc_20261027_194000"
-API_PROVIDER = "OPENROUTER"
-MODEL_NAME = "anthropic/claude-sonnet-5.5"
+DATA_VERSION = "poc_20261029_194000"
+API_PROVIDER = "OPENAI"
+MODEL_NAME = "gpt-4.1"
 
 # ***************************************************
 # * 프롬프트
@@ -148,6 +149,7 @@ def main():
 
     article_files = sorted(data_dir.glob("*.json"))
     error_cases = load_error_cases(ERROR_CASES_FILE)
+    mistag_dictionary = load_mistag_dictionary(ERROR_CASES_FILE)
 
     for input_file in article_files:
         id_file = id_dir / input_file.name
@@ -177,6 +179,8 @@ def main():
                 article_input += "\n\n" + format_representative_cases(selected_cases)
                 prompt_source = article_input.split("\n\n[오류유형 대표사례 - 참고용]", 1)[0]
                 system_prompt, selected_tags, selected_exceptions, prompt_fallback = build_system_prompt(prompt_source)
+                mistag_references = format_mistag_references(prompt_source, mistag_dictionary)
+                if mistag_references: system_prompt += "\n\n" + mistag_references
                 logging.info(
                     f"프롬프트 선택완료: 문서={document['id']} | "
                     f"태그={','.join(selected_tags)} | "
