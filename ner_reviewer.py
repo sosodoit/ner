@@ -6,69 +6,89 @@
 # ***************************************************
 import os
 import json
+import re
 import logging
+import argparse
 from zoneinfo import ZoneInfo
 from datetime import datetime
 from pathlib import Path
 from openai import OpenAI
 from dotenv import load_dotenv
-load_dotenv()
 
 from error_case_retriever import ERROR_LV1, ERROR_LV2
 from error_case_retriever import load_error_cases, split_reviewed_sentences, convert_reviewed_cases, select_representative_cases, format_representative_cases
 
 BASE_DIR = Path(__file__).resolve().parent
-ANALYSIS_DIR = BASE_DIR / "analysis"
 DATA_ROOT = BASE_DIR / "data"
-
-DATA_VERSION = "poc_20261027_194000"
-DATA_DIR = DATA_ROOT / DATA_VERSION
-ID_DIR = DATA_DIR / "id"
-RUN_ID = f"run_{datetime.now(ZoneInfo('Asia/Seoul')).strftime('%Y%m%d_%H%M%S')}"
-OUTPUT_DIR = BASE_DIR / "outputs" / DATA_VERSION / RUN_ID
-
-ERROR_CASES_FILE = ANALYSIS_DIR / "NER_개체명검수이력.xlsx"
 PROMPT_DIR = BASE_DIR / "prompts"
+ANALYSIS_DIR = BASE_DIR / "analysis"
+ERROR_CASES_FILE = ANALYSIS_DIR / "NER_개체명검수이력.xlsx"
 LOG_FILE = BASE_DIR / "ner_reviewer.log"
 
+TAGS = ("ps", "lc", "og", "af", "dt", "ev")
+ENTITY_TAG_PATTERN = re.compile(r"<[^:>]+:\s*(PS|LC|OG|AF|DT|EV)>", re.IGNORECASE)
+TAG_TRIGGER_PATTERNS = {
+    "ps": re.compile(r"대통령|장관|배우|가수|선수|작가|감독|후보|씨\b"),
+    "lc": re.compile(r"(?:[가-힣]{2,}(?:시|도|군|구|동|강|섬|역)|한국|미국|중국|일본|서울|부산|제주|공원|공항)"),
+    "og": re.compile(r"회사|기업|대학|학교|정부|국회|위원회|본부|공단|협회|병원|은행|정당|구단|대표팀|특검|검찰|경찰"),
+    "af": re.compile(r"도서관|박물관|미술관|타워|다리|교량|도로|철도|선박|항공기|아이폰|작품|영화|소설|상품"),
+    "dt": re.compile(r"\d{2,4}년|\d{1,2}월|\d{1,2}일|지난해|올해|내년|이번 주|지난주|다음 주|시대|계절|연말|연초"),
+    "ev": re.compile(r"전쟁|혁명|사건|사고|참사|선거|대회|축제|회의|콘서트|올림픽|월드컵|토론|캠페인|운동|경기"),
+}
+TAG_CONFUSION_MAP = {
+    "ps": {"og", "af"},
+    "lc": {"og", "af"},
+    "og": {"lc", "af"},
+    "af": {"og", "lc"},
+    "dt": {"ev"},
+    "ev": {"dt", "og"},
+}
+
 # ***************************************************
-# * API 설정
+# * 설정
+# * DATA_VERSION: 검수 대상 데이터 폴더명
 # * OPENAI: gpt-4.1, gpt-5.1, gpt-5.2, gpt-5.4
 # * OPENROUTER: openai/gpt-4.1, openai/gpt-5.1, openai/gpt-5.2, openai/gpt-5.4, anthropic/claude-sonnet-5.5, anthropic/claude-haiku-5.5
 # ***************************************************
+DATA_VERSION = "poc_20261027_194000"
 API_PROVIDER = "OPENROUTER"
 MODEL_NAME = "anthropic/claude-sonnet-5.5"
-
-if API_PROVIDER == "OPENAI":
-    API_KEY = os.getenv("SELECTSTART_OPENAI_API_KEY")
-    BASE_URL = None
-elif API_PROVIDER == "OPENROUTER":
-    API_KEY = os.getenv("OPENROUTER_API_KEY")
-    BASE_URL = "https://openrouter.ai/api/v1"
-else:
-    raise ValueError(f"지원하지 않는 API_PROVIDER: {API_PROVIDER}")
-
-client = OpenAI(
-    api_key=API_KEY,
-    **({"base_url": BASE_URL} if BASE_URL else {}),
-)
-
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s", handlers=[logging.FileHandler(LOG_FILE, encoding="utf-8"), logging.StreamHandler()])
 
 # ***************************************************
 # * 프롬프트
 # * 공통 원칙: all.txt
 # * 태그별 규칙: {tag}.txt
-# * 예외 사항: {excepts}.txt
+# * 특수 상황: {excepts}.txt
 # ***************************************************
 read_prompt = lambda path: path.read_text(encoding="utf-8-sig").strip()
 
-SYSTEM_PROMPT = "\n\n".join([
-    read_prompt(PROMPT_DIR / "all.txt"),
-    "\n".join(f"## {tag}\n{read_prompt(PROMPT_DIR / f'{tag}.txt')}" for tag in ["ps", "lc", "og", "af", "dt", "ev"]),
-    "\n".join(f"## {excepts}\n{read_prompt(PROMPT_DIR / f'exception/{excepts}.txt')}" for excepts in ["common", "lean_word", "multilingual", "parentheses"]),
-    read_prompt(PROMPT_DIR / "system_prompt.txt")
-])
+def build_system_prompt(article_text):
+    existing_tags = {tag.lower() for tag in ENTITY_TAG_PATTERN.findall(article_text)}
+    triggered_tags = set()
+    for tag, pattern in TAG_TRIGGER_PATTERNS.items():
+        if pattern.search(article_text):
+            triggered_tags.add(tag)
+
+    fallback = not triggered_tags
+    if fallback:
+        selected_tags = set(TAGS)
+    else:
+        selected_tags = existing_tags | triggered_tags
+        for tag in existing_tags:
+            selected_tags.update(TAG_CONFUSION_MAP.get(tag, set()))
+
+    selected_exceptions = ["common"]
+    if "(" in article_text or "（" in article_text: selected_exceptions.append("parentheses")
+    if re.search(r"[A-Za-z]", article_text): selected_exceptions.append("multilingual")
+
+    sections = [
+        ("공통 판단 원칙", PROMPT_DIR / "all.txt"),
+        *[(f"태그별 기준: {tag.upper()}", PROMPT_DIR / f"{tag}.txt") for tag in TAGS if tag in selected_tags],
+        *[(f"특수 상황: {excepts}", PROMPT_DIR / f"exception/{excepts}.txt") for excepts in selected_exceptions],
+        ("검수 실행 지침", PROMPT_DIR / "system_prompt.txt"),
+    ]
+    prompt = "\n\n".join(f"# {title}\n{read_prompt(path)}" for title, path in sections)
+    return prompt, sorted(selected_tags), selected_exceptions, fallback
 
 # ***************************************************
 # * 출력(LLM 검수 결과) 스키마
@@ -91,91 +111,119 @@ REVIEW_SCHEMA = {
 
 RESPONSE_SCHEMA = {
     "type": "object",
-    "properties": {
-        "reviews": {"type": "array", "items": REVIEW_SCHEMA}
-    },
+    "properties": {"reviews": {"type": "array", "items": REVIEW_SCHEMA}},
     "required": ["reviews"],
     "additionalProperties": False,
 }
 
 # ***************************************************
 # * LLM 검수 & 결과 저장
-# * 입력 형식: 문장ID, 문장텍스트, 검수상태, 대표사례
-# * 출력 형식: 문장ID, 대상문장, 수정문장, 오류유형1, 오류유형2, 검수사유, 추가검수필요여부
-# * - 검수대상 문장이 없으면 LLM 검수를 실행하지 않고 기존검수결과 저장
 # * 입력 단위: 문서(document) 단위
 # * 출력 단위: 문서(document) 단위
-# * 출력 파일명: {언론사}.jsonl
-# * - article : ner 태깅된 corpus4 json 파일
 # ***************************************************
-article_files = sorted(DATA_DIR.glob("*.json"))
-error_cases = load_error_cases(ERROR_CASES_FILE)
-OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+def main():
+    parser = argparse.ArgumentParser(description="NER 개체명 태깅 검수")
+    parser.add_argument("--data-version", default=DATA_VERSION)
+    args = parser.parse_args()
 
-for input_file in article_files:
+    load_dotenv(BASE_DIR / ".env")
 
-    id_file = ID_DIR / input_file.name
-    output_file = OUTPUT_DIR / f"{input_file.stem}.jsonl"
-    article = json.loads(input_file.read_text(encoding="utf-8-sig"))
-    review_status = split_reviewed_sentences(input_file, id_file, error_cases)
+    if API_PROVIDER == "OPENAI":
+        api_key = os.getenv("SELECTSTART_OPENAI_API_KEY")
+        base_url = None
+    elif API_PROVIDER == "OPENROUTER":
+        api_key = os.getenv("OPENROUTER_API_KEY")
+        base_url = "https://openrouter.ai/api/v1"
+    else:
+        raise ValueError(f"지원하지 않는 API_PROVIDER: {API_PROVIDER}")
 
-    with output_file.open("w", encoding="utf-8") as f:
-        for document in article["document"]:
-            sentences = [{"sentence_id": sentence["id"], "text": sentence["form"]} for paragraph in document["paragraph"] for sentence in paragraph["sentence"]]
-            document_status = review_status[document["id"]]
-            reviewed_ids = {item["sentence_id"] for item in document_status["reviewed"]}
-            
-            # 미검수 문장과 유사한 대표사례 선택
-            selected_cases = select_representative_cases(document_status["unreviewed"], error_cases)
-            article_input = (
-                "다음은 개체명 태깅 검수 대상 기사입니다.\n\n"
-                + "\n".join(
-                    f"[{('기존검수완료 - 결과유지' if sentence['sentence_id'] in reviewed_ids else '신규검수대상')}] "
-                    f"[{sentence['sentence_id']}] {sentence['text']}"
-                    for sentence in sentences
+    client = OpenAI(api_key=api_key, **({"base_url": base_url} if base_url else {}))
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s", handlers=[logging.FileHandler(LOG_FILE, encoding="utf-8"), logging.StreamHandler()])
+
+    data_dir = DATA_ROOT / args.data_version
+    id_dir = data_dir / "id"
+    run_id = f"run_{datetime.now(ZoneInfo('Asia/Seoul')).strftime('%Y%m%d_%H%M%S')}"
+    output_dir = BASE_DIR / "outputs" / args.data_version / run_id
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    article_files = sorted(data_dir.glob("*.json"))
+    error_cases = load_error_cases(ERROR_CASES_FILE)
+
+    for input_file in article_files:
+        id_file = id_dir / input_file.name
+        output_file = output_dir / f"{input_file.stem}.jsonl"
+        article = json.loads(input_file.read_text(encoding="utf-8-sig"))
+        review_status = split_reviewed_sentences(input_file, id_file, error_cases)
+
+        with output_file.open("w", encoding="utf-8") as f:
+            for document in article["document"]:
+                sentences = [
+                    {"sentence_id": sentence["id"], "text": sentence["form"]}
+                    for paragraph in document["paragraph"]
+                    for sentence in paragraph["sentence"]
+                ]
+                document_status = review_status[document["id"]]
+                reviewed_ids = {item["sentence_id"] for item in document_status["reviewed"]}
+
+                selected_cases = select_representative_cases(document_status["unreviewed"], error_cases)
+                article_input = (
+                    "다음은 개체명 태깅 검수 대상 기사입니다.\n\n"
+                    + "\n".join(
+                        f"[{('기존검수완료 - 결과유지' if sentence['sentence_id'] in reviewed_ids else '신규검수대상')}] "
+                        f"[{sentence['sentence_id']}] {sentence['text']}"
+                        for sentence in sentences
+                    )
                 )
-            )
-            article_input += "\n\n" + format_representative_cases(selected_cases)
-
-            # 미검수 문장이 있을 때만 LLM 검수 실행
-            if document_status["unreviewed"]:
-                response = client.responses.create(
-                    model=MODEL_NAME,
-                    instructions=SYSTEM_PROMPT,
-                    input=article_input,
-                    text={
-                        "format": {
-                            "type": "json_schema",
-                            "name": "ner_error_type_response",
-                            "strict": True,
-                            "schema": RESPONSE_SCHEMA,
-                        }
-                    }
+                article_input += "\n\n" + format_representative_cases(selected_cases)
+                prompt_source = article_input.split("\n\n[오류유형 대표사례 - 참고용]", 1)[0]
+                system_prompt, selected_tags, selected_exceptions, prompt_fallback = build_system_prompt(prompt_source)
+                logging.info(
+                    f"프롬프트 선택완료: 문서={document['id']} | "
+                    f"태그={','.join(selected_tags)} | "
+                    f"예외={','.join(selected_exceptions)} | "
+                    f"fallback={prompt_fallback} | 대표사례={len(selected_cases)}"
                 )
-                llm_reviews = json.loads(response.output_text)["reviews"]
-                # 기존검수문장에 대한 LLM 결과 제외
-                llm_reviews = [review for review in llm_reviews if review["sentence_id"] not in reviewed_ids]
-            else:
-                llm_reviews = []
 
-            # LLM이 오류 결과를 반환하지 않은 문장은 정상으로 기록
-            returned_sentence_ids = {review["sentence_id"] for review in llm_reviews}
-            for sentence in document_status["unreviewed"]:
-                if sentence["sentence_id"] not in returned_sentence_ids:
-                    llm_reviews.append({
-                        "sentence_id": sentence["sentence_id"],
-                        "review_status": "normal",
-                        "target_span": None,
-                        "corrected_span": None,
-                        "error_lv1": None,
-                        "error_lv2": None,
-                        "reason": "오류 없음",
-                        "review_needed": False,
-                    })
+                if document_status["unreviewed"]:
+                    response = client.responses.create(
+                        model=MODEL_NAME,
+                        instructions=system_prompt,
+                        input=article_input,
+                        text={
+                            "format": {
+                                "type": "json_schema",
+                                "name": "ner_error_type_response",
+                                "strict": True,
+                                "schema": RESPONSE_SCHEMA,
+                            }
+                        },
+                    )
+                    llm_reviews = json.loads(response.output_text)["reviews"]
+                    llm_reviews = [review for review in llm_reviews if review["sentence_id"] not in reviewed_ids]
+                else:
+                    llm_reviews = []
 
-            # 저장
-            result = {"reviews": convert_reviewed_cases(document_status["reviewed"]) + llm_reviews}
-            f.write(json.dumps({"doc_id": document["id"], "provider": API_PROVIDER, "model": MODEL_NAME, "result": result,}, ensure_ascii=False) + "\n")
-            logging.info(f"검수완료: {document['id']}")
+                returned_sentence_ids = {review["sentence_id"] for review in llm_reviews}
+                for sentence in document_status["unreviewed"]:
+                    if sentence["sentence_id"] not in returned_sentence_ids:
+                        llm_reviews.append({
+                            "sentence_id": sentence["sentence_id"],
+                            "review_status": "normal",
+                            "target_span": None,
+                            "corrected_span": None,
+                            "error_lv1": None,
+                            "error_lv2": None,
+                            "reason": "오류 없음",
+                            "review_needed": False,
+                        })
 
-    logging.info(f"결과저장완료: {output_file}")
+                result = {"reviews": convert_reviewed_cases(document_status["reviewed"]) + llm_reviews}
+                f.write(json.dumps({"doc_id": document["id"], "provider": API_PROVIDER, "model": MODEL_NAME, "result": result}, ensure_ascii=False) + "\n")
+                logging.info(f"검수완료: {document['id']}")
+
+        logging.info(f"결과저장완료: {output_file}")
+
+
+if __name__ == "__main__":
+    main()
+
