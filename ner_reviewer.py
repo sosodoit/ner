@@ -9,11 +9,13 @@ import json
 import re
 import logging
 import argparse
+import time
 from zoneinfo import ZoneInfo
 from datetime import datetime
 from pathlib import Path
 from openai import OpenAI
 from dotenv import load_dotenv
+from langsmith import traceable
 
 from error_case_retriever import ERROR_LV1, ERROR_LV2
 from error_case_retriever import load_error_cases, select_representative_cases, format_representative_cases
@@ -51,9 +53,10 @@ TAG_CONFUSION_MAP = {
 # * OPENAI: gpt-4.1, gpt-5.1, gpt-5.2, gpt-5.4
 # * OPENROUTER: openai/gpt-4.1, openai/gpt-5.1, openai/gpt-5.2, openai/gpt-5.4, anthropic/claude-sonnet-5.5, anthropic/claude-haiku-5.5
 # ***************************************************
-DATA_VERSION = os.getenv("DATA_VERSION", "poc_20261029_194000")
-API_PROVIDER = os.getenv("API_PROVIDER", "OPENAI")
-MODEL_NAME = os.getenv("MODEL_NAME", "gpt-4.1")
+load_dotenv(BASE_DIR / ".env")
+DATA_VERSION = os.getenv("DATA_VERSION")
+API_PROVIDER = os.getenv("API_PROVIDER")
+MODEL_NAME = os.getenv("MODEL_NAME")
 
 # ***************************************************
 # * 프롬프트
@@ -128,8 +131,6 @@ def main():
     parser.add_argument("--data-version", default=DATA_VERSION)
     args = parser.parse_args()
 
-    load_dotenv(BASE_DIR / ".env")
-
     if API_PROVIDER == "OPENAI":
         api_key = os.getenv("SELECTSTART_OPENAI_API_KEY")
         base_url = None
@@ -140,21 +141,40 @@ def main():
         raise ValueError(f"지원하지 않는 API_PROVIDER: {API_PROVIDER}")
 
     client = OpenAI(api_key=api_key, **({"base_url": base_url} if base_url else {}))
+    @traceable(name="ner_review", run_type="llm")
+    def call_model(instructions, article_input):
+        return client.responses.create(
+            model=MODEL_NAME,
+            instructions=instructions,
+            input=article_input,
+            text={
+                "format": {
+                    "type": "json_schema",
+                    "name": "ner_response",
+                    "strict": True,
+                    "schema": RESPONSE_SCHEMA,
+                }
+            },
+        )
+
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s", handlers=[logging.FileHandler(LOG_FILE, encoding="utf-8"), logging.StreamHandler()])
 
     data_dir = DATA_ROOT / args.data_version
     run_id = f"run_{datetime.now(ZoneInfo('Asia/Seoul')).strftime('%Y%m%d_%H%M%S')}"
-    output_dir = BASE_DIR / "outputs" / args.data_version / run_id
-    output_dir.mkdir(parents=True, exist_ok=True)
+    output_root = BASE_DIR / "outputs" / args.data_version / run_id / "reports"
+    output_root.mkdir(parents=True, exist_ok=True)
 
     article_files = sorted(data_dir.glob("*.json"))
     error_cases = load_error_cases(ERROR_CASES_FILE)
     mistag_dictionary = load_mistag_dictionary(ERROR_CASES_FILE)
 
     for input_file in article_files:
-        output_file = output_dir / f"{input_file.stem}.jsonl"
+        outlet_dir = output_root / input_file.stem
+        outlet_dir.mkdir(parents=True, exist_ok=True)
+        output_file = outlet_dir / "reviews.jsonl"
+        metadata_file = outlet_dir / "documents_meta.jsonl"
         article = json.loads(input_file.read_text(encoding="utf-8-sig"))
-        with output_file.open("w", encoding="utf-8") as f:
+        with output_file.open("a", encoding="utf-8") as f, metadata_file.open("a", encoding="utf-8") as meta_f:
             for document in article["document"]:
                 sentences = [
                     {"sentence_id": sentence["id"], "text": sentence["form"]}
@@ -181,24 +201,55 @@ def main():
                     f"fallback={prompt_fallback} | 대표사례={len(selected_cases)}"
                 )
 
+                started_at = datetime.now(ZoneInfo('Asia/Seoul')).isoformat()
+                started = time.perf_counter()
                 try:
-                    response = client.responses.create(
-                        model=MODEL_NAME,
-                        instructions=system_prompt,
-                        input=article_input,
-                        text={
-                            "format": {
-                                "type": "json_schema",
-                                "name": "ner_error_type_response",
-                                "strict": True,
-                                "schema": RESPONSE_SCHEMA,
-                            }
-                        },
-                    )
+                    response = call_model(system_prompt, article_input)
                     llm_reviews = json.loads(response.output_text)["reviews"]
                 except Exception as exc:
+                    latency_sec = time.perf_counter() - started
+                    meta_f.write(json.dumps({
+                        "id": document["id"], "run_id": run_id,
+                        "started_at": started_at, "provider": API_PROVIDER,
+                        "model": MODEL_NAME, "n_sentences": len(sentences),
+                        "latency_sec": latency_sec, "usage": None,
+                        "status": "error", "error": str(exc),
+                        "selected_tags": sorted(selected_tags),
+                        "selected_exceptions": selected_exceptions,
+                    }, ensure_ascii=False) + "\n")
+                    meta_f.flush()
                     logging.error(f"LLM 검수 실패: {document['id']} | {exc} | 다음 문서로 진행")
                     continue
+
+                latency_sec = time.perf_counter() - started
+                raw_usage = getattr(response, "usage", None)
+                usage = None
+                if raw_usage is not None:
+                    if hasattr(raw_usage, "model_dump"):
+                        raw_usage = raw_usage.model_dump()
+                    elif hasattr(raw_usage, "dict"):
+                        raw_usage = raw_usage.dict()
+                    else:
+                        raw_usage = {
+                            key: getattr(raw_usage, key, None)
+                            for key in (
+                                "prompt_tokens", "completion_tokens", "total_tokens",
+                                "input_tokens", "output_tokens", "input_tokens_details",
+                                "output_tokens_details",
+                            )
+                            if hasattr(raw_usage, key)
+                        }
+                    usage = {
+                        "prompt_tokens": raw_usage.get("prompt_tokens", raw_usage.get("input_tokens")),
+                        "completion_tokens": raw_usage.get("completion_tokens", raw_usage.get("output_tokens")),
+                        "total_tokens": raw_usage.get("total_tokens"),
+                        "completion_tokens_details": raw_usage.get(
+                            "completion_tokens_details", raw_usage.get("output_tokens_details")
+                        ),
+                        "prompt_tokens_details": raw_usage.get(
+                            "prompt_tokens_details", raw_usage.get("input_tokens_details")
+                        ),
+                    }
 
                 returned_sentence_ids = {review["sentence_id"] for review in llm_reviews}
                 sentence_ids = {sentence["sentence_id"] for sentence in sentences}
@@ -218,9 +269,20 @@ def main():
                 llm_reviews = [review for review in llm_reviews if review["sentence_id"] in sentence_ids]
                 result = {"reviews": llm_reviews}
                 f.write(json.dumps({"doc_id": document["id"], "provider": API_PROVIDER, "model": MODEL_NAME, "result": result}, ensure_ascii=False) + "\n")
+                meta_f.write(json.dumps({
+                    "id": document["id"], "run_id": run_id,
+                    "started_at": started_at, "provider": API_PROVIDER,
+                    "model": MODEL_NAME, "n_sentences": len(sentences),
+                    "latency_sec": latency_sec, "usage": usage,
+                    "status": "success", "error": None,
+                    "selected_tags": sorted(selected_tags),
+                    "selected_exceptions": selected_exceptions,
+                }, ensure_ascii=False) + "\n")
+                f.flush()
+                meta_f.flush()
                 logging.info(f"검수완료: {document['id']}")
 
-        logging.info(f"결과저장완료: {output_file}")
+        logging.info(f"결과저장완료: {outlet_dir}")
 
 
 if __name__ == "__main__":
