@@ -29,6 +29,7 @@ except ImportError:  # Support running this file directly as a script.
 BASE_DIR = Path(__file__).resolve().parents[2]
 DATA_ROOT = BASE_DIR / "data"
 PROMPT_DIR = BASE_DIR / "prompts"
+TAG_PROMPT_DIR = PROMPT_DIR / "tags"
 ANALYSIS_DIR = BASE_DIR / "analysis"
 ERROR_CASES_FILE = ANALYSIS_DIR / "NER_개체명검수이력.xlsx"
 LOG_FILE = BASE_DIR / "logs" / "ner_reviewer.log"
@@ -65,9 +66,6 @@ MODEL_NAME = os.getenv("MODEL_NAME")
 
 # ***************************************************
 # * 프롬프트
-# * 공통 원칙: all.txt
-# * 태그별 규칙: {tag}.txt
-# * 특수 상황: {excepts}.txt
 # ***************************************************
 read_prompt = lambda path: path.read_text(encoding="utf-8-sig").strip()
 
@@ -91,8 +89,15 @@ def build_system_prompt(article_text):
     if re.search(r"[A-Za-z]", article_text): selected_exceptions.append("multilingual")
 
     sections = [
-        ("공통 판단 원칙", PROMPT_DIR / "all.txt"),
-        *[(f"태그별 기준: {tag.upper()}", PROMPT_DIR / f"{tag}.txt") for tag in TAGS if tag in selected_tags],
+        ("공통 판단 원칙", TAG_PROMPT_DIR / "all.txt"),
+        *[
+            (
+                f"태그별 기준: {tag.upper()}",
+                TAG_PROMPT_DIR / f"{tag}.txt",
+            )
+            for tag in TAGS
+            if tag in selected_tags
+        ],
         *[(f"특수 상황: {excepts}", PROMPT_DIR / f"exception/{excepts}.txt") for excepts in selected_exceptions],
         ("검수 실행 지침", PROMPT_DIR / "system_prompt.txt"),
     ]

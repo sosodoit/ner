@@ -9,6 +9,9 @@ ner/
 ├── analysis/             # 검수 이력 Excel 등 분석 자료
 ├── private/              # 인증 파일 등 비공개 자료
 ├── prompts/              # LLM 검수 프롬프트
+│   ├── tags/             # 공통 및 태그별 기준(af, dt, ev, lc, og, ps, all)
+│   ├── system_prompt.txt
+│   └── exception/        # 특수 상황별 기준
 ├── logs/                 # 실행 로그
 └── src/
     ├── llm_review/
