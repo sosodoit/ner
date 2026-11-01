@@ -13,7 +13,8 @@ from collections import defaultdict
 # ***************************************************
 # * 로그 설정
 # ***************************************************
-LOG_FILE = Path(__file__).resolve().parent / "error_case_retriever.log"
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+LOG_FILE = PROJECT_ROOT / "logs" / "error_case_retriever.log"
 retriever_logger = logging.getLogger("error_case_retriever")
 retriever_logger.setLevel(logging.INFO)
 retriever_logger.propagate = False

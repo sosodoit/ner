@@ -12,9 +12,12 @@ from google.cloud import bigquery
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 
-from google_sheets_schema import ALL_COLUMNS, HUMAN_COLUMNS, key, prepare, errors
+try:
+    from .google_sheets_schema import ALL_COLUMNS, HUMAN_COLUMNS, key, prepare, errors
+except ImportError:  # Support running this file directly as a script.
+    from google_sheets_schema import ALL_COLUMNS, HUMAN_COLUMNS, key, prepare, errors
 
-BASE_DIR = Path(__file__).resolve().parent
+BASE_DIR = Path(__file__).resolve().parents[2]
 FOLDER_ID = "1k4Bj3Vy20TZDdVIN2bUKHTbZsptaXQlh"
 SPREADSHEET_ID = "1O9BzNmx8aj_ZGxFTdglssI4Sfd1WeKRUpowEDWsZFrQ"
 SCOPES = ("https://www.googleapis.com/auth/drive", "https://www.googleapis.com/auth/spreadsheets")
@@ -22,7 +25,7 @@ SCOPES = ("https://www.googleapis.com/auth/drive", "https://www.googleapis.com/a
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
-    handlers=[logging.FileHandler(BASE_DIR / "export_google_sheet.log", encoding="utf-8"), logging.StreamHandler()],
+    handlers=[logging.FileHandler(BASE_DIR / "logs" / "export_google_sheet.log", encoding="utf-8"), logging.StreamHandler()],
 )
 
 

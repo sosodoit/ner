@@ -17,16 +17,21 @@ from openai import OpenAI
 from dotenv import load_dotenv
 from langsmith import traceable
 
-from error_case_retriever import ERROR_LV1, ERROR_LV2
-from error_case_retriever import load_error_cases, select_representative_cases, format_representative_cases
-from error_case_retriever import load_mistag_dictionary, format_mistag_references
+try:
+    from .error_case_retriever import ERROR_LV1, ERROR_LV2
+    from .error_case_retriever import load_error_cases, select_representative_cases, format_representative_cases
+    from .error_case_retriever import load_mistag_dictionary, format_mistag_references
+except ImportError:  # Support running this file directly as a script.
+    from error_case_retriever import ERROR_LV1, ERROR_LV2
+    from error_case_retriever import load_error_cases, select_representative_cases, format_representative_cases
+    from error_case_retriever import load_mistag_dictionary, format_mistag_references
 
-BASE_DIR = Path(__file__).resolve().parent
+BASE_DIR = Path(__file__).resolve().parents[2]
 DATA_ROOT = BASE_DIR / "data"
 PROMPT_DIR = BASE_DIR / "prompts"
 ANALYSIS_DIR = BASE_DIR / "analysis"
 ERROR_CASES_FILE = ANALYSIS_DIR / "NER_개체명검수이력.xlsx"
-LOG_FILE = BASE_DIR / "ner_reviewer.log"
+LOG_FILE = BASE_DIR / "logs" / "ner_reviewer.log"
 
 TAGS = ("ps", "lc", "og", "af", "dt", "ev")
 ENTITY_TAG_PATTERN = re.compile(r"<[^:>]+:\s*(PS|LC|OG|AF|DT|EV)>", re.IGNORECASE)

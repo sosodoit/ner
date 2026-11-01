@@ -11,8 +11,8 @@ from zoneinfo import ZoneInfo
 from datetime import datetime
 from pathlib import Path
 
-BASE_DIR = Path(__file__).resolve().parent
-LOG_FILE = BASE_DIR / "extract_target_data.log"
+BASE_DIR = Path(__file__).resolve().parents[2]
+LOG_FILE = BASE_DIR / "logs" / "extract_target_data.log"
 
 TARGET_DOCUMENTS = {
     "강원일보": [

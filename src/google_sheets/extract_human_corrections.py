@@ -8,8 +8,12 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-from export_google_sheet import BASE_DIR, SPREADSHEET_ID, first_sheet, google_services
-from google_sheets_schema import key
+try:
+    from .export_google_sheet import BASE_DIR, SPREADSHEET_ID, first_sheet, google_services
+    from .google_sheets_schema import key
+except ImportError:  # Support running this file directly as a script.
+    from export_google_sheet import BASE_DIR, SPREADSHEET_ID, first_sheet, google_services
+    from google_sheets_schema import key
 
 
 def read_rows(sheets, spreadsheet_id):

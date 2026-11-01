@@ -19,7 +19,7 @@ from dotenv import load_dotenv
 # ***************************************************
 # * 설정
 # ***************************************************
-BASE_DIR = Path(__file__).resolve().parent
+BASE_DIR = Path(__file__).resolve().parents[2]
 load_dotenv(BASE_DIR / ".env")
 
 PROJECT_ID = os.getenv("GCP_PROJECT_ID")
@@ -27,7 +27,7 @@ DATASET_ID = os.getenv("GCP_DATASET_ID")
 TABLE_NAME = os.getenv("GCP_TABLE_NAME")
 
 OUTPUT_DIR = BASE_DIR / "outputs"
-LOG_FILE = BASE_DIR / "upload_to_bigquery.log"
+LOG_FILE = BASE_DIR / "logs" / "load_reviews.log"
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s", handlers=[logging.FileHandler(LOG_FILE, encoding="utf-8"), logging.StreamHandler(),])
 
