@@ -132,14 +132,21 @@ def iter_json_objects(file_path):
         yield article
 
 
+def resolve_run_dir(file_path):
+    """Return the run directory for both legacy and reports-based layouts."""
+    if file_path.parent.name == "reports" and file_path.parent.parent.name.startswith("run_"):
+        return file_path.parent.parent
+    if file_path.parent.parent.name == "reports" and file_path.parent.parent.parent.name.startswith("run_"):
+        return file_path.parent.parent.parent
+    if file_path.parent.name.startswith("run_"):
+        return file_path.parent
+    raise ValueError(f"지원하지 않는 검수 결과 경로: {file_path}")
+
+
 def flatten_reviews(file_path):
-    run_dir = file_path.parent
-    if run_dir.name.startswith("run_"):
-        run_folder = f"{run_dir.parent.name}/{run_dir.name}"
-    else:
-        run_folder = run_dir.name
-    dataset_version = run_dir.parent.name if run_dir.name.startswith("run_") else run_dir.name
-    press = file_path.stem
+    run_dir = resolve_run_dir(file_path)
+    run_folder = f"{run_dir.parent.name}/{run_dir.name}"
+    press = file_path.parent.name if file_path.name == "reviews.jsonl" else file_path.stem
     dataset_version, source_index = load_source_index(run_dir, press)
     load_dt = datetime.now(ZoneInfo("Asia/Seoul")).date().isoformat()
 
@@ -237,6 +244,18 @@ def upload_file(file_path, client, table_id):
 # ***************************************************
 # * 실행
 # ***************************************************
+def find_review_files(input_dir):
+    """Find review JSONL files in a run directory or an entire dataset version."""
+    if input_dir.name.startswith("run_"):
+        candidates = [*input_dir.glob("*.jsonl"), *input_dir.glob("reports/*/reviews.jsonl")]
+    else:
+        candidates = [*input_dir.glob("*.jsonl")]
+        for run_dir in sorted(input_dir.glob("run_*")):
+            candidates.extend(run_dir.glob("*.jsonl"))
+            candidates.extend(run_dir.glob("reports/*/reviews.jsonl"))
+    return sorted(set(candidates))
+
+
 def main():
     parser = argparse.ArgumentParser(description="NER 검수 결과 BigQuery 적재")
     parser.add_argument("run_path", help="적재할 outputs 하위 경로 (예: poc_20261027_194000/run_20261028_132100)")
@@ -247,7 +266,7 @@ def main():
     client = bigquery.Client(project=PROJECT_ID)
     table_id = f"{PROJECT_ID}.{DATASET_ID}.{TABLE_NAME}"
     client.create_table(bigquery.Table(table_id, schema=SCHEMA), exists_ok=True)
-    files = sorted(run_dir.glob("*.jsonl"))
+    files = find_review_files(run_dir)
     logging.info(f"대상파일: {len(files)}개")
 
     for file_path in files:
