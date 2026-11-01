@@ -1,10 +1,10 @@
 # Created by https://www.toptal.com/developers/gitignore/api/python
 # Edit at https://www.toptal.com/developers/gitignore?templates=python
 temp/
-data/
-outputs/
-private/
-analysis/
+data/poc_*
+outputs/poc_*
+private/google-bigquery.json
+analysis/NER_개체명검수이력.xlsx
 .vscode/
 
 ### Python ###
