@@ -3,10 +3,11 @@
 temp/
 data/poc_*
 outputs/poc_*
-private/google-bigquery.json
-private/db.json
-analysis/NER_개체명검수이력.xlsx
+private/*.json
+analysis/*.xlsx
 .vscode/
+*.ipynb
+*.csv
 
 ### Python ###
 # Byte-compiled / optimized / DLL files
