@@ -8,6 +8,7 @@ analysis/*.xlsx
 .vscode/
 *.ipynb
 *.csv
+*.jsonl
 
 ### Python ###
 # Byte-compiled / optimized / DLL files
