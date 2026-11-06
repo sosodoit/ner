@@ -6,9 +6,9 @@ outputs/poc_*
 private/*.json
 analysis/*.xlsx
 .vscode/
-*.ipynb
 *.csv
 *.jsonl
+.agents/
 
 ### Python ###
 # Byte-compiled / optimized / DLL files
