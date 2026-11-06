@@ -7,22 +7,17 @@
 import numpy as np
 import pandas as pd
 
-
-def ext_e001(output_data, error_df_freq):
-    error_df = error_df_freq[error_df_freq["고빈도여부"] == "Y"].drop_duplicates(
-        subset=["temp_entity_name", "entity_type"]
-    )[["temp_entity_name", "entity_type"]].reset_index(drop=True)
+# ext_e001
+def ext_e001(output_data, error_data):
+    error_df = error_data[error_data["고빈도여부"] == "Y"].drop_duplicates(subset=["temp_entity_name", "entity_type"])[["temp_entity_name", "entity_type"]].reset_index(drop=True)
 
     # 오류 통계에 존재하는 개체명과 태그에 EXT_E001 컬럼에 'Y' 표시
     output_data["EXT_E001"] = np.where(
         pd.MultiIndex.from_frame(output_data[["temp_entity_name", "entity_type"]])
-        .isin(pd.MultiIndex.from_frame(error_df[["temp_entity_name", "entity_type"]])),
-        "Y",
-        "N"
-    )
+        .isin(pd.MultiIndex.from_frame(error_data[["temp_entity_name", "entity_type"]])), "Y", "N")
     return output_data
 
-
+# ext_e002
 def ext_e002(output_data):
     # 고빈도여부와 다중태그여부가 Y인 경우 EXT_E002 컬럼에 'Y' 표시
     target_quartiles = ["Q4"]
@@ -32,3 +27,11 @@ def ext_e002(output_data):
     output_data["다중태그여부"] = tag_count.ge(2).map({True: "Y", False: "N"})
     output_data["EXT_E002"] = ((output_data["고빈도여부"] == "Y") & (output_data["다중태그여부"] == "Y")).map({True: "Y", False: "N"})
     return output_data
+
+# ext_e003
+# ext_e004
+# ext_e005
+# ext_e006
+# ext_e007
+# ext_e008
+# ext_e009
