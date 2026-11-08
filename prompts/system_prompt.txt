@@ -56,4 +56,6 @@
 
 ## 6. 출력 지침
 
-`ner_reviewer.py`의 JSON Schema와 허용값만 사용. `reviews` 배열 외의 설명·분석·서두·맺음말 출력 금지.
+`schema.py`의 JSON Schema와 허용값만 사용. `reviews` 배열 외의 설명·분석·서두·맺음말 출력 금지.
+
+---
