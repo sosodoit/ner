@@ -38,12 +38,14 @@ SCHEMA = [
     bigquery.SchemaField("run_folder", "STRING"),
     bigquery.SchemaField("provider", "STRING"),
     bigquery.SchemaField("model", "STRING"),
+    bigquery.SchemaField("prompt_version", "STRING"),
     bigquery.SchemaField("dataset_version", "STRING"),
     bigquery.SchemaField("press", "STRING"),
     bigquery.SchemaField("doc_id", "STRING"),
     bigquery.SchemaField("sentence_id", "STRING"),
     bigquery.SchemaField("review_id", "INT64"),
     bigquery.SchemaField("source_sentence", "STRING"),
+    bigquery.SchemaField("llm_review_status", "STRING"),
     bigquery.SchemaField("review_status", "STRING"),
     bigquery.SchemaField("target_span", "STRING"),
     bigquery.SchemaField("target_type", "STRING"),
@@ -82,6 +84,14 @@ def load_source_index(run_dir, publisher):
 
 def _normal_rows(review, source):
     """정상 판정은 원본 문장 안 기존 개체명별 읽기 전용 행으로 확장한다."""
+    if not source["entities"]:
+        return [{
+            **review,
+            "review_id": 0,
+            "target_span": None,
+            "target_type": None,
+        }]
+
     return [
         {**review, "review_id": index, **entity}
         for index, entity in enumerate(source["entities"], 1)
@@ -167,11 +177,13 @@ def flatten_reviews(file_path):
                     "run_folder": run_folder,
                     "provider": article.get("provider"),
                     "model": article.get("model"),
+                    "prompt_version": article.get("prompt_version"),
                     "dataset_version": dataset_version,
                     "press": press,
                     "doc_id": article.get("doc_id"),
                     "sentence_id": sentence_id,
                     "source_sentence": source["source_sentence"],
+                    "llm_review_status": review.get("llm_review_status", "unreviewed"),
                     "review_status": review_status,
                     "corrected_span": None,
                     "error_lv1": None,
@@ -188,11 +200,13 @@ def flatten_reviews(file_path):
                     "run_folder": run_folder,
                     "provider": article.get("provider"),
                     "model": article.get("model"),
+                    "prompt_version": article.get("prompt_version"),
                     "dataset_version": dataset_version,
                     "press": press,
                     "doc_id": article.get("doc_id"),
                     "sentence_id": sentence_id,
                     "source_sentence": source["source_sentence"],
+                    "llm_review_status": review.get("llm_review_status", "unreviewed"),
                     "review_status": review_status,
                     "corrected_span": review.get("corrected_span"),
                     "error_lv1": review.get("error_lv1"),

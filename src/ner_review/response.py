@@ -9,6 +9,7 @@ import time
 import json
 import logging
 import argparse
+import pandas as pd
 from dotenv import load_dotenv
 from openai import OpenAI
 from pathlib import Path
@@ -127,7 +128,10 @@ def review_file(input_file, output_root, run_id, data_version, call_model):
 
     output_file = outlet_dir / "reviews.jsonl"
     metadata_file = outlet_dir / "documents_meta.jsonl"
-    article = json.loads(input_file.read_text(encoding="utf-8-sig"))
+    if input_file.suffix in {".pkl", ".pickle"}:
+        article = pd.read_pickle(input_file)
+    else:
+        article = json.loads(input_file.read_text(encoding="utf-8-sig"))
 
     with (output_file.open("w", encoding="utf-8") as result_file, metadata_file.open("w", encoding="utf-8") as metadata_output):
         for document in article["document"]:
@@ -184,27 +188,33 @@ def review_file(input_file, output_root, run_id, data_version, call_model):
 # ***************************************************
 # * 검수 파이프라인 실행
 # ***************************************************
-def run_pipeline(data_version=DATA_VERSION):
+def run_pipeline(data_version=DATA_VERSION, rule_pickle=None):
     configure_logging()
     client = create_client()
     call_model = create_model_caller(client)
     run_id = f"run_{datetime.now(ZoneInfo('Asia/Seoul')).strftime('%Y%m%d_%H%M%S')}"
 
-    data_dir = DATA_ROOT / data_version
+    if rule_pickle:
+        input_files = [Path(rule_pickle)]
+        data_version = data_version or input_files[0].parent.name
+    else:
+        data_dir = DATA_ROOT / data_version
+        input_files = sorted(data_dir.glob("*.json"))
+
     output_root = BASE_DIR / "outputs" / data_version / run_id / "reports"
     output_root.mkdir(parents=True, exist_ok=True)
 
-    input_files = sorted(data_dir.glob("*.json"))
     for input_file in input_files:
         review_file(input_file, output_root, run_id, data_version, call_model)
 
 def main():
     parser = argparse.ArgumentParser(description="NER 개체명 태깅 검수")
     parser.add_argument("--data-version", default=DATA_VERSION)
+    parser.add_argument("--rule-pickle", type=Path, help="룰 검출 결과로 생성된 기사 단위 review pickle")
     args = parser.parse_args()
 
     # 검수 파이프라인 실행
-    run_pipeline(args.data_version)
+    run_pipeline(args.data_version, args.rule_pickle)
 
 
 if __name__ == "__main__":

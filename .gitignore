@@ -10,6 +10,7 @@ analysis/*.xlsx
 *.jsonl
 .agents/
 *.pkl
+legacy/
 
 ### Python ###
 # Byte-compiled / optimized / DLL files

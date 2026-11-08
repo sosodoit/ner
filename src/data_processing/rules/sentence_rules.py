@@ -5,7 +5,6 @@
 # * 설명: 문장 데이터에 문장 단위 룰을 적용
 # ***************************************************
 
-
 def ext_s001(output_data):
     # form에 '계엄'이 포함된 행에 EXT_S001 컬럼에 'Y' 표시
     output_data["EXT_S001"] = output_data["form"].str.contains("계엄").map({True: "Y", False: "N"})
