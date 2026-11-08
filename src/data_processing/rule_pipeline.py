@@ -38,7 +38,8 @@ def run_pipeline(input_data, error_data, output_dir=None):
     output_data = ext_e002(output_data)
 
     # 검수 대상 기사 저장
-    save_review_articles(input_path, review_output_dir / f"{input_path.stem}.pkl", output_data)
+    review_data = save_review_articles(input_path, review_output_dir / f"{input_path.stem}.pkl", output_data)
+    print_pipeline_counts(input_path, output_data, review_data)
     return output_data
 
 # 검수대상기사(룰에 걸린 문장이 하나라도 있는 기사)
@@ -64,3 +65,20 @@ def save_review_articles(input_data, output_path, output_data):
     output_path.parent.mkdir(parents=True, exist_ok=True)
     pd.to_pickle(review_data, output_path)
     return review_data
+
+# 결과 요약
+def print_pipeline_counts(input_data, output_data, review_data):
+    input_path = Path(input_data)
+    source_data = json.loads(input_path.read_text(encoding="utf-8-sig"))
+    rule_hits = output_data[RULE_COLUMNS].eq("Y").any(axis=1)
+
+    source_sentence_count = output_data[["doc_id", "sentence_id"]].drop_duplicates().shape[0]
+    source_entity_count = output_data.loc[output_data["entity_id"].notna(), ["doc_id", "entity_id"]].drop_duplicates().shape[0]
+    review_sentence_count = output_data.loc[rule_hits, ["doc_id", "sentence_id"]].drop_duplicates().shape[0]
+    review_entity_count = output_data.loc[rule_hits & output_data["entity_id"].notna(), ["doc_id", "entity_id"]].drop_duplicates().shape[0]
+
+    print(
+        f"[rule_pipeline] {input_path.name}\n"
+        f"└ 원본: 기사 {len(source_data['document'])}건, 문장 {source_sentence_count}건, 개체명 {source_entity_count}건\n"
+        f"└ 룰검출: 기사 {len(review_data['document'])}건, 문장 {review_sentence_count}건, 개체명 {review_entity_count}건"
+    )

@@ -188,16 +188,23 @@ def review_file(input_file, output_root, run_id, data_version, call_model):
 # ***************************************************
 # * 검수 파이프라인 실행
 # ***************************************************
-def run_pipeline(data_version=DATA_VERSION, rule_pickle=None):
+def run_pipeline(data_version=None, rule_pickle=None):
     configure_logging()
     client = create_client()
     call_model = create_model_caller(client)
     run_id = f"run_{datetime.now(ZoneInfo('Asia/Seoul')).strftime('%Y%m%d_%H%M%S')}"
 
     if rule_pickle:
-        input_files = [Path(rule_pickle)]
-        data_version = data_version or input_files[0].parent.name
+        rule_path = Path(rule_pickle)
+        if rule_path.is_dir():
+            input_files = sorted(rule_path.glob("*.pkl"))
+            inferred_data_version = rule_path.parent.name
+        else:
+            input_files = [rule_path]
+            inferred_data_version = rule_path.parent.parent.name
+        data_version = data_version or inferred_data_version
     else:
+        data_version = data_version or DATA_VERSION
         data_dir = DATA_ROOT / data_version
         input_files = sorted(data_dir.glob("*.json"))
 
@@ -209,8 +216,8 @@ def run_pipeline(data_version=DATA_VERSION, rule_pickle=None):
 
 def main():
     parser = argparse.ArgumentParser(description="NER 개체명 태깅 검수")
-    parser.add_argument("--data-version", default=DATA_VERSION)
-    parser.add_argument("--rule-pickle", type=Path, help="룰 검출 결과로 생성된 기사 단위 review pickle")
+    parser.add_argument("--data-version")
+    parser.add_argument("--rule-pickle", type=Path, help="룰 검출 pickle 파일 또는 rule_review 폴더")
     args = parser.parse_args()
 
     # 검수 파이프라인 실행
