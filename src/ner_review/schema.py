@@ -25,6 +25,7 @@ REVIEW_SCHEMA = {
     "type": "object",
     "properties": {
         "sentence_id": {"type": "string"},
+        "entity_id": {"anyOf": [{"type": "string"}, {"type": "null"}]},
         "review_status": {"type": "string", "enum": ["error", "normal"]},
         "target_span": {"anyOf": [{"type": "string"}, {"type": "null"}]},
         "corrected_span": {"anyOf": [{"type": "string"}, {"type": "null"}]},
@@ -33,7 +34,7 @@ REVIEW_SCHEMA = {
         "reason": {"type": "string"},
         "review_needed": {"type": "boolean"},
     },
-    "required": ["sentence_id", "review_status", "target_span", "corrected_span", "error_lv1", "error_lv2", "reason", "review_needed"],
+    "required": ["sentence_id", "entity_id", "review_status", "target_span", "corrected_span", "error_lv1", "error_lv2", "reason", "review_needed"],
     "additionalProperties": False,
 }
 

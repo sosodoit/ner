@@ -59,3 +59,11 @@
 `schema.py`의 JSON Schema와 허용값만 사용. `reviews` 배열 외의 설명·분석·서두·맺음말 출력 금지.
 
 ---
+
+## Entity-level review requirement
+
+- The input lists the exact review targets for each sentence.
+- Return one review object for each listed `entity_id`.
+- Copy the listed `entity_id` exactly into the response.
+- Do not identify a target only by `target_span` when `entity_id` is provided.
+- For a sentence with no listed entity, return one sentence-level review with `entity_id: null`.

@@ -30,7 +30,7 @@ load_dotenv(BASE_DIR / ".env")
 DATA_VERSION = os.getenv("DATA_VERSION")
 API_PROVIDER = os.getenv("API_PROVIDER")
 MODEL_NAME = os.getenv("MODEL_NAME")
-PROMPT_VERSION = "ner-review-v1"
+PROMPT_VERSION = "ner-review-v2-entity-id"
 
 # ***************************************************
 # * 로그 설정
@@ -95,7 +95,11 @@ def create_model_caller(client):
 # ***************************************************
 def extract_sentences(document):
     return [
-        {"sentence_id": sentence["id"], "text": sentence["form"]}
+        {
+            "sentence_id": sentence["id"],
+            "text": sentence["form"],
+            "entities": sentence.get("entities", []),
+        }
         for paragraph in document["paragraph"]
         for sentence in paragraph["sentence"]
     ]
@@ -106,12 +110,23 @@ def extract_sentences(document):
 def prepare_document(document):
     sentences = extract_sentences(document)
 
+    sentence_blocks = []
+    for item in sentences:
+        entity_lines = [
+            f"- entity_id: {entity['entity_id']} | "
+            f"target_span: {entity['target_span']} | "
+            f"target_type: {entity['target_type']}"
+            for entity in item["entities"]
+        ]
+        entity_text = "\n".join(entity_lines) or "- 없음 (문장 단위 검수)"
+        sentence_blocks.append(
+            f"[{item['sentence_id']}] {item['text']}\n"
+            f"검수 대상:\n{entity_text}"
+        )
+
     article_input = (
         "# 개체명 태깅 검수 대상 기사:\n\n"
-        + "\n".join(
-            f"[{item['sentence_id']}] {item['text']}"
-            for item in sentences
-        )
+        + "\n".join(sentence_blocks)
     )
 
     system_prompt = build_system_prompt(PROMPT_DIR)

@@ -5,6 +5,7 @@
 # * 설명: 문장 데이터 생성부터 문장 및 개체명 단위 룰 적용까지 실행
 # ***************************************************
 import json
+import argparse
 import pandas as pd
 from pathlib import Path
 from .prepare.ner_prepare_data import entity_data, sentence_data
@@ -54,6 +55,39 @@ def select_review_articles(input_data, rule_data, output_data):
         if document["id"] in target_doc_ids
     ]
 
+    # 문장별 개체명 정보 구성
+    entity_index = {}
+    entity_columns = ["doc_id", "sentence_id", "entity_id", "entity_tagging", "entity_type"]
+    entity_rows = output_data.loc[output_data["entity_id"].notna(), entity_columns]
+    for row in entity_rows.to_dict("records"):
+        key = (row["doc_id"], row["sentence_id"])
+        entity_index.setdefault(key, []).append({
+            "entity_id": row["entity_id"],
+            "target_span": row["entity_tagging"],
+            "target_type": row["entity_type"],
+        })
+
+    # 원본 문장에 개체명 정보 연결
+    for document in selected_documents:
+        for paragraph in document["paragraph"]:
+            for sentence in paragraph["sentence"]:
+                key = (document["id"], sentence["id"])
+                sentence["entities"] = entity_index.get(key, [])
+
+    expected_entity_count = entity_rows["entity_id"].drop_duplicates().shape[0]
+    saved_entity_count = sum(
+        len(sentence.get("entities", []))
+        for document in selected_documents
+        for paragraph in document["paragraph"]
+        for sentence in paragraph["sentence"]
+    )
+
+    if expected_entity_count > 0 and saved_entity_count == 0:
+        raise RuntimeError(
+            "검수용 pickle에 entity 정보가 저장되지 않았습니다. "
+            "doc_id/sentence_id 연결을 확인하세요."
+        )
+                
     review_data = {key: value for key, value in source.items() if key != "document"}
     review_data["document"] = selected_documents
     return review_data
@@ -81,4 +115,18 @@ def print_pipeline_counts(input_data, output_data, review_data):
         f"[rule_pipeline] {input_path.name}\n"
         f"└ 원본: 기사 {len(source_data['document'])}건, 문장 {source_sentence_count}건, 개체명 {source_entity_count}건\n"
         f"└ 룰검출: 기사 {len(review_data['document'])}건, 문장 {review_sentence_count}건, 개체명 {review_entity_count}건"
+    )
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="NER rule review 데이터 생성")
+    parser.add_argument("input_data", type=Path)
+    parser.add_argument("error_data", type=Path)
+    parser.add_argument("--output-dir", type=Path)
+    args = parser.parse_args()
+
+    run_pipeline(
+        input_data=args.input_data,
+        error_data=args.error_data,
+        output_dir=args.output_dir,
     )
