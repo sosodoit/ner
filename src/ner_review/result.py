@@ -7,6 +7,9 @@
 import json
 import time
 
+def safe_error_message(error):
+    return f"{type(error).__name__}: request failed"
+
 def normalize_reviews(results, sentences):
     # LLM 결과를 원문 순서에 맞춰 재정렬
     reviews_by_sentence_id = {}
@@ -29,7 +32,7 @@ def normalize_reviews(results, sentences):
                 "corrected_span": None,
                 "error_lv1": None,
                 "error_lv2": None,
-                "reason": "unreviewed",
+                "reason": None,
                 "review_needed": True,
             })
             continue
@@ -90,7 +93,7 @@ def save_review_result(
         "n_sentences": len(sentences),
         "latency_sec": time.perf_counter() - started,
         "status": "success" if is_success else "error",
-        "error": str(error) if error else None,
+        "error": safe_error_message(error) if error else None,
         "llm_review_status": llm_review_status,
         "prompt_version": prompt_version,
     })

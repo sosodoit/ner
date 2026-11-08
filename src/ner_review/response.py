@@ -17,7 +17,7 @@ from datetime import datetime
 from langsmith import traceable
 from langsmith.wrappers import wrap_openai
 from .prompt import build_system_prompt
-from .result import normalize_reviews, save_review_result
+from .result import normalize_reviews, safe_error_message, save_review_result
 from .schema import RESPONSE_SCHEMA
 
 BASE_DIR = Path(__file__).resolve().parents[2]
@@ -71,19 +71,22 @@ def create_client():
 def create_model_caller(client):
     @traceable(name="ner_review", run_type="chain")
     def call_model(instructions, article_input):
-        return client.responses.create(
-            model=MODEL_NAME,
-            instructions=instructions,
-            input=article_input,
-            text={
-                "format": {
-                    "type": "json_schema",
-                    "name": "ner_response",
-                    "strict": True,
-                    "schema": RESPONSE_SCHEMA,
+        try:
+            return client.responses.create(
+                model=MODEL_NAME,
+                instructions=instructions,
+                input=article_input,
+                text={
+                    "format": {
+                        "type": "json_schema",
+                        "name": "ner_response",
+                        "strict": True,
+                        "schema": RESPONSE_SCHEMA,
+                    }
                 }
-            },
-        )
+            )
+        except Exception:
+            raise RuntimeError("LLM API request failed") from None
     return call_model
 
 # ***************************************************
@@ -153,7 +156,10 @@ def review_file(input_file, output_root, run_id, data_version, call_model):
                     PROMPT_VERSION,
                     error=exc,
                 )
-                logging.error(f"LLM 검수 실패: {document['id']} | {exc} | 다음 문서로 진행")
+                logging.error(
+                    f"LLM 검수 실패: {document['id']} | "
+                    f"{safe_error_message(exc)} | 다음 문서로 진행"
+                )
                 continue
 
             save_review_result(
