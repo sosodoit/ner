@@ -53,6 +53,4 @@ def build_error_stat(input_data):
     target_quartiles = ["Q4", "Q3", "Q2", "Q1"]
     output_data["고빈도여부"] = output_data["freq_quartile"].isin(target_quartiles).map({True: "Y", False: "N"})
 
-    output_data.to_pickle(input_data.rsplit(".", 1)[0] + ".pkl")
-
     return output_data

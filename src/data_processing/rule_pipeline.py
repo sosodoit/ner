@@ -8,17 +8,32 @@ import json
 import argparse
 import pandas as pd
 from pathlib import Path
-from .prepare.ner_prepare_data import entity_data, sentence_data
+from .prepare.transform import entity_data, sentence_data
 from .rules.entity_rules import ext_e001, ext_e002
 from .rules.sentence_rules import ext_s001, ext_s002, ext_s003
 
 RULE_COLUMNS = ["EXT_S001", "EXT_S002", "EXT_S003", "EXT_E001", "EXT_E002"]
 
-def run_pipeline(input_data, error_data, output_dir=None):
+REFER_DIR = Path("analysis")
+ERROR_DATA_PATH = REFER_DIR / "error_data.pkl"
+MISTAG_DATA_PATH = REFER_DIR / "mistag_data.pkl"
+TAG_DATA_PATH = REFER_DIR / "tag_data.pkl"
+
+def load_reference_data():
+    return {
+        "error_data": pd.read_pickle(ERROR_DATA_PATH),
+        "mistag_data": pd.read_pickle(MISTAG_DATA_PATH),
+        "tag_data": pd.read_pickle(TAG_DATA_PATH),
+    }
+
+def run_pipeline(input_data, output_dir=None):
     
     input_path = Path(input_data)
     review_output_dir = Path(output_dir) if output_dir else input_path.parent / "rule_review"
     review_output_dir.mkdir(parents=True, exist_ok=True)
+    
+    # 참고 데이터 로드
+    refer_data = load_reference_data()
 
     # 문장 단위 데이터
     output_data = sentence_data(input_data)
@@ -27,16 +42,15 @@ def run_pipeline(input_data, error_data, output_dir=None):
     output_data = ext_s001(output_data)
     output_data = ext_s002(output_data)
     output_data = ext_s003(output_data)
+    # 룰 추가시 작성
 
     # 개체명 단위 데이터
     output_data = entity_data(output_data)
 
-    # 오류 이력 데이터
-    error_df_freq = pd.read_pickle(error_data)
-
     # 개체명 단위 룰 적용
-    output_data = ext_e001(output_data, error_df_freq)
-    output_data = ext_e002(output_data)
+    output_data = ext_e001(output_data, refer_data["error_data"])
+    output_data = ext_e002(output_data, refer_data["mistag_data"])
+    # 룰 추가시 작성
 
     # 검수 대상 기사 저장
     review_data = save_review_articles(input_path, review_output_dir / f"{input_path.stem}.pkl", output_data)
@@ -121,12 +135,7 @@ def print_pipeline_counts(input_data, output_data, review_data):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="NER rule review 데이터 생성")
     parser.add_argument("input_data", type=Path)
-    parser.add_argument("error_data", type=Path)
     parser.add_argument("--output-dir", type=Path)
     args = parser.parse_args()
 
-    run_pipeline(
-        input_data=args.input_data,
-        error_data=args.error_data,
-        output_dir=args.output_dir,
-    )
+    run_pipeline(input_data=args.input_data, output_dir=args.output_dir)
