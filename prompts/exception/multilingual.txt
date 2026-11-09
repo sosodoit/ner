@@ -1,21 +1,27 @@
 # 외국어 표기 개체명
 
 ## 적용 조건
-한국어 문장 안에 인명, 지명, 기관명, 상품명, 작품명 등 개체명이 외국어나 원어로 표기된 경우
+한국어 문장 안에 인명, 지명, 기관명, 상품명, 작품명 등이 외국어·원어로 표기된 경우
 
-## 원칙
-- 외국어나 원어로 표기된 개체명도 개체명 범주에 따라 태깅
-- 영문 대소문자, 띄어쓰기, 숫자 결합 여부와 관계없이 식별 가능한 전체 개체명 태깅
-- 한국어 개체명과 괄호 속 원어가 함께 제시된 경우, 괄호의 통합·분리 및 괄호 안 개체명의 태깅은 `parentheses.txt` 기준 적용
-- 문장이나 단락 전체가 외국어로 작성된 경우 외국어 개체명 미태깅
+## 기준
+- 외국어 표기 개체명도 한국어 개체명과 같은 범주 기준으로 태깅
+- 대소문자, 띄어쓰기, 숫자 결합과 무관하게 식별 가능한 명칭 전체를 하나로 태깅
+- 한국어 개체명과 괄호 속 원어가 함께 나오면 `parentheses.txt` 적용
+- 문장·단락 전체가 외국어인 경우 그 안의 개체명은 미태깅
 
 ## 예시
-- Post Malone → `<Post Malone: PS>`
-- PARIS → `<PARIS: LC>`
-- Starbucks → `<Starbucks: OG>`
-- iPhone11pro → `<iPhone11pro: AF>`
-- The Devil Wears Prada → `<The Devil Wears Prada: AF>`
-- 본초강목(本草綱目) → `<본초강목: AF>`(`<本草綱目: AF>`)
-- 뉴욕시(New York City) → `<뉴욕시: LC>`(`<New York City: LC>`)
 
----
+| 원문 | 정답 |
+|---|---|
+| Post Malone | `<Post Malone: PS>` |
+| PARIS | `<PARIS: LC>` |
+| Starbucks | `<Starbucks: OG>` |
+| iPhone11pro | `<iPhone11pro: AF>` |
+| The Devil Wears Prada | `<The Devil Wears Prada: AF>` |
+| 본초강목(本草綱目) | `<본초강목: AF>`(`<本草綱目: AF>`) |
+| 뉴욕시(New York City) | `<뉴욕시: LC>`(`<New York City: LC>`) |
+
+## 검수 확인 사항
+- 외국어 명칭 일부만 태깅된 경우 → 범위 축소
+- 영문 단어 사이 공백을 기준으로 하나의 명칭이 분리된 경우 → 분리 오류
+- 외국어 문장 전체 안의 개체명이 태깅된 경우 → 오태깅
