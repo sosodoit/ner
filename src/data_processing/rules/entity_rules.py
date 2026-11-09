@@ -50,16 +50,116 @@ def ext_e003(output_data, mistag_data):
 
 # <개체명: DT> 중 구조적 오류가 의심되는 개체명
 def ext_e004(output_data, tag_data):
-    return 1
+    tag_data_ = tag_data[tag_data["rule_id"] == 'EXT_E004'].reset_index(drop=True)
+    for _, rule in tag_data_.iterrows():
+        rule_id = rule["rule_id"]
+        sub_rule_id = rule["sub_rule_id"]
+        pattern = str(rule["pattern"]).strip()
 
-# ext_e005
-def ext_e005():
-    return 1
+        # 문장 단위 정규식 탐지
+        regex = re.compile(pattern)
+        pattern_search = output_data["form"].fillna("").apply(lambda x: [match.group(0) for match in regex.finditer(x)])
 
-# ext_e006
-def ext_e006():
-    return 1
+        # 기존 태깅 문자열이 탐지 패턴에 포함되는지
+        output_data[f"{rule_id}_{sub_rule_id}"] = [
+            "Y" if any(entity_tagging in pattern for pattern in patterns) else "N"
+            for patterns, entity_tagging in zip(pattern_search, output_data["entity_tagging"])
+        ]
 
-# ext_e007
-def ext_e007():
-    return 1
+        # 검증용: 실제 탐지 패턴
+        output_data[f"{rule_id}_{sub_rule_id}_PATTERN"] = [
+            ", ".join(pattern for pattern in patterns if entity_tagging in pattern)
+            for patterns, entity_tagging in zip(pattern_search, output_data["entity_tagging"])
+        ]
+    return output_data
+
+# <개체명: EV> 중 DT 표현이 포함된 개체명
+def ext_e005(output_data, tag_data):
+    tag_data_ = tag_data[tag_data["rule_id"].eq("EXT_E005")]
+    ev_mask = output_data["entity_type"].eq("EV")
+    entity_names = output_data.loc[ev_mask, "entity_name"].fillna("").astype(str)
+
+    for _, rule in tag_data_.iterrows():
+        rule_id = rule["rule_id"]
+        sub_rule_id = rule["sub_rule_id"]
+        result_col = f"{rule_id}_{sub_rule_id}"
+        pattern_col = f"{result_col}_PATTERN"
+        regex = re.compile(str(rule["pattern"]).strip())
+        pattern_search = entity_names.map(regex.findall)
+
+        output_data[result_col] = "N"
+        output_data[pattern_col] = ""
+        output_data.loc[ev_mask, result_col] = pattern_search.map(
+            lambda matches: "Y" if matches else "N"
+        )
+        output_data.loc[ev_mask, pattern_col] = pattern_search.map(
+            ", ".join
+        )
+
+    return output_data
+
+# <개체명: EV> 뒤에 이어지는 EV 표현 탐지
+def ext_e006(output_data, tag_data):
+    tag_data_ = tag_data[tag_data["rule_id"].eq("EXT_E006")]
+    all_tag_regex = re.compile(r"<[^<>:]+?\s*:\s*(?:PS|LC|OG|AF|EV|DT)>")
+    ev_tag_regex = re.compile(r":\s*EV>$")
+    entity_order_regex = re.compile(r"\.E(\d+)$")
+
+    form_targets = {}
+    ev_index = output_data.index[output_data["entity_type"].eq("EV")]
+    for idx in ev_index:
+        form_value = output_data.at[idx, "form"]
+        form = "" if pd.isna(form_value) else str(form_value)
+        entity_order_match = entity_order_regex.search(str(output_data.at[idx, "entity_id"]))
+        if entity_order_match is None:
+            continue
+
+        tagged_entities = form_targets.get(form)
+        if tagged_entities is None:
+            tagged_entities = {
+                "entities": list(all_tag_regex.finditer(form)),
+                "rows": [],
+            }
+            form_targets[form] = tagged_entities
+
+        entity_order = int(entity_order_match.group(1)) - 1
+        all_entities = tagged_entities["entities"]
+        if entity_order < 0 or entity_order >= len(all_entities):
+            continue
+        target_entity = all_entities[entity_order]
+
+        if ev_tag_regex.search(target_entity.group(0)):
+            tagged_entities.setdefault("rows", []).append(
+                (idx, target_entity.start(), target_entity.end())
+            )
+
+    for _, rule in tag_data_.iterrows():
+        rule_id = rule["rule_id"]
+        sub_rule_id = rule["sub_rule_id"]
+        result_col = f"{rule_id}_{sub_rule_id}"
+        pattern_col = f"{result_col}_PATTERN"
+        regex = re.compile(str(rule["pattern"]).strip())
+        output_data[result_col] = "N"
+        output_data[pattern_col] = ""
+
+        for form, targets in form_targets.items():
+            if not targets["rows"]:
+                continue
+            detected_matches = list(regex.finditer(form))
+            if not detected_matches:
+                continue
+
+            for idx, target_start, target_end in targets.get("rows", []):
+                detected_match = next(
+                    (
+                        match
+                        for match in detected_matches
+                        if match.start() <= target_start < target_end <= match.end()
+                    ),
+                    None,
+                )
+                if detected_match is not None:
+                    output_data.at[idx, result_col] = "Y"
+                    output_data.at[idx, pattern_col] = detected_match.group(0)
+
+    return output_data
