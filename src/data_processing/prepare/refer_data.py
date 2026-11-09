@@ -7,7 +7,7 @@ analysis_dir = Path(__file__).resolve().parents[3] / "analysis"
 analysis_dir.mkdir(parents=True, exist_ok=True)
 
 dict_path = analysis_dir / "NER_오태깅사전.xlsx"
-error_data_path = analysis_dir / "NER_개체명검수이력_V2.xlsx"
+error_data_path = analysis_dir / "NER_개체명검수이력.xlsx"
 
 # 오태깅 사전
 mistag_data = pd.read_excel(

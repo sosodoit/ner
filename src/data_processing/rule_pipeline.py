@@ -9,10 +9,10 @@ import argparse
 import pandas as pd
 from pathlib import Path
 from .prepare.transform import entity_data, sentence_data
-from .rules.entity_rules import ext_e001, ext_e002
-from .rules.sentence_rules import ext_s001, ext_s002, ext_s003
+from .rules.entity_rules import *
+from .rules.sentence_rules import *
 
-RULE_COLUMNS = ["EXT_S001", "EXT_S002", "EXT_S003", "EXT_E001", "EXT_E002"]
+RULE_COLUMNS = ["EXT_S001", "EXT_S002", "EXT_S003", "EXT_E001", "EXT_E002", "EXT_E003", "EXT_E004", "EXT_E005", "EXT_E006"]
 
 REFER_DIR = Path("analysis")
 ERROR_DATA_PATH = REFER_DIR / "error_data.pkl"
@@ -35,6 +35,7 @@ def run_pipeline(input_data, output_dir=None):
     # 참고 데이터 로드
     refer_data = load_reference_data()
 
+    #----------------------------------------
     # 문장 단위 데이터
     output_data = sentence_data(input_data)
 
@@ -42,15 +43,18 @@ def run_pipeline(input_data, output_dir=None):
     output_data = ext_s001(output_data)
     output_data = ext_s002(output_data)
     output_data = ext_s003(output_data)
-    # 룰 추가시 작성
 
     # 개체명 단위 데이터
     output_data = entity_data(output_data)
 
     # 개체명 단위 룰 적용
     output_data = ext_e001(output_data, refer_data["error_data"])
-    output_data = ext_e002(output_data, refer_data["mistag_data"])
-    # 룰 추가시 작성
+    output_data = ext_e002(output_data)
+    output_data = ext_e003(output_data, refer_data["mistag_data"])
+    output_data = ext_e004(output_data, refer_data["tag_data"])
+    output_data = ext_e005(output_data, refer_data["tag_data"])
+    output_data = ext_e006(output_data, refer_data["tag_data"])
+    #----------------------------------------
 
     # 검수 대상 기사 저장
     review_data = save_review_articles(input_path, review_output_dir / f"{input_path.stem}.pkl", output_data)
@@ -114,7 +118,7 @@ def save_review_articles(input_data, output_path, output_data):
     pd.to_pickle(review_data, output_path)
     return review_data
 
-# 결과 요약
+# 결과 요약 (내용 보완 필요함)
 def print_pipeline_counts(input_data, output_data, review_data):
     input_path = Path(input_data)
     source_data = json.loads(input_path.read_text(encoding="utf-8-sig"))
