@@ -38,9 +38,28 @@ REVIEW_SCHEMA = {
     "additionalProperties": False,
 }
 
+CORRECTED_SENTENCE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "sentence_id": {"type": "string"},
+        "corrected_sentence": {"type": "string"},
+    },
+    "required": ["sentence_id", "corrected_sentence"],
+    "additionalProperties": False,
+}
+
 RESPONSE_SCHEMA = {
     "type": "object",
-    "properties": {"reviews": {"type": "array", "items": REVIEW_SCHEMA}},
-    "required": ["reviews"],
+    "properties": {
+        "reviews": {
+            "type": "array",
+            "items": REVIEW_SCHEMA
+        },
+        "corrected_sentences": {
+            "type": "array",
+            "items": CORRECTED_SENTENCE_SCHEMA,
+        }
+    },
+    "required": ["reviews", "corrected_sentences"],
     "additionalProperties": False,
 }
