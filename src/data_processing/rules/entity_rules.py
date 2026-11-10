@@ -12,15 +12,15 @@ import pandas as pd
 def ext_e001(output_data, error_data):
     error_pairs = pd.MultiIndex.from_frame(error_data[["entity_name_no_space", "entity_type"]].drop_duplicates())
     output_pairs = pd.MultiIndex.from_frame(output_data[["entity_name_no_space", "entity_type"]])
-    output_data["EXT_E001"] = np.where(output_pairs.isin(error_pairs), "Y", "N")
+    output_data["EXT_E001"] = np.where(output_pairs.isin(error_pairs), True, False)
     return output_data
 
 # 다중 태깅, 고빈도 출현 개체명
 def ext_e002(output_data):
-    output_data["고빈도여부"] = output_data["freq_quartile"].eq("Q4").map({True: "Y", False: "N"})
+    output_data["고빈도여부"] = output_data["freq_quartile"].eq("Q4")
     tag_count = output_data.groupby("entity_name_no_space")["entity_type"].transform("nunique")
-    output_data["다중태그여부"] = tag_count.ge(2).map({True: "Y", False: "N"})
-    output_data["EXT_E002"] = (output_data["고빈도여부"].eq("Y") & output_data["다중태그여부"].eq("Y")).map({True: "Y", False: "N"})
+    output_data["다중태그여부"] = tag_count.ge(2)
+    output_data["EXT_E002"] = output_data["고빈도여부"] & output_data["다중태그여부"]
     return output_data
 
 # <개체명: 태그> 중 오태깅 사전에 등록된 개체명
@@ -45,7 +45,7 @@ def ext_e003(output_data, mistag_data):
         pattern_col = f"{result_col}_PATTERN"
 
         output_data[result_col] = [
-            "Y" if any(entity_name in match for match in matches) else "N"
+            True if any(entity_name in match for match in matches) else False
             for matches, entity_name in zip(pattern_search, entity_names)
         ]
 
@@ -79,7 +79,7 @@ def ext_e004(output_data, tag_data):
         pattern_col = f"{result_col}_PATTERN"
 
         output_data[result_col] = [
-            "Y" if any(entity_tagging in match for match in patterns) else "N"
+            True if any(entity_tagging in match for match in patterns) else False
             for patterns, entity_tagging in zip(pattern_search, entity_taggings)
         ]
 
@@ -106,10 +106,10 @@ def ext_e005(output_data, tag_data):
         regex = re.compile(str(rule.pattern).strip())
         pattern_search = entity_names.map(regex.findall)
 
-        output_data[result_col] = "N"
+        output_data[result_col] = False
         output_data[pattern_col] = ""
 
-        output_data.loc[ev_mask, result_col] = pattern_search.map(lambda matches: "Y" if matches else "N")
+        output_data.loc[ev_mask, result_col] = pattern_search.map(lambda matches: True if matches else False)
         output_data.loc[ev_mask, pattern_col] = pattern_search.map(", ".join)
 
     return output_data
@@ -132,7 +132,7 @@ def ext_e006(output_data, tag_data):
         pattern_search = forms.map(lambda form: [match.group(0) for match in regex.finditer(form)])
 
         output_data[result_col] = [
-            "Y" if tagging and any(tagging in match for match in matches) else "N"
+            True if tagging and any(tagging in match for match in matches) else False
             for matches, tagging in zip(pattern_search, entity_taggings)
         ]
         
@@ -141,6 +141,6 @@ def ext_e006(output_data, tag_data):
             for matches, tagging in zip(pattern_search, entity_taggings)
         ]
 
-        output_data.loc[~ev_mask, [result_col, pattern_col]] = ["N", ""]
+        output_data.loc[~ev_mask, [result_col, pattern_col]] = [False, ""]
 
     return output_data

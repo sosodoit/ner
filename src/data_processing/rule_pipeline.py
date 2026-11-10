@@ -10,11 +10,13 @@
 import json
 import argparse
 import pandas as pd
+from tqdm import tqdm
 from pathlib import Path
+from ..config.progress import spand_time
 from .prepare.transform import entity_data, sentence_data
+from .prepare.error_stats import build_error_stat
 from .rules.entity_rules import *
 from .rules.sentence_rules import *
-from .prepare.error_stats import build_error_stat
 
 BASE_DIR = Path(__file__).resolve().parents[2]
 
@@ -74,7 +76,7 @@ def load_refer_data():
 def save_llm_input_data(input_data, output_path, output_data):
 
     # 룰 컬럼 중 하나라도 Y인 문장 탐지
-    rule_hits = output_data[RULE_COLUMNS].eq("Y").any(axis=1)
+    rule_hits = output_data[RULE_COLUMNS].any(axis=1)
 
     # 중복 기사 ID 제거
     target_doc_ids = set(output_data.loc[rule_hits, "doc_id"].dropna()) 
@@ -158,4 +160,4 @@ if __name__ == "__main__":
     parser.add_argument("--update", action="store_true", help="참조 데이터 갱신")
     args = parser.parse_args()
 
-    run_pipeline(input_data=args.input_data, update_refer_data=args.update)
+    spand_time(run_pipeline, input_data=args.input_data, update_refer_data=args.update)
