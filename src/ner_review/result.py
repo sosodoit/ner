@@ -45,7 +45,7 @@ def normalize_reviews(results, sentences):
         # 결과를 반환한 각 검수 행을 reviewed로 표시
         for review in sentence_reviews:
             normalized_review = dict(review)
-            normalized_review.setdefault("entity_id", None)
+            # normalized_review.setdefault("entity_id", None)
             normalized_review["llm_review_status"] = "reviewed"
             normalized_review["entities"] = entities
             normalized_results.append(normalized_review)
