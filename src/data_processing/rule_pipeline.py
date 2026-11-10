@@ -10,7 +10,6 @@
 import json
 import argparse
 import pandas as pd
-from tqdm import tqdm
 from pathlib import Path
 from ..config.progress import spand_time
 from .prepare.transform import entity_data, sentence_data
@@ -35,7 +34,6 @@ ANALYSIS_DIR.mkdir(parents=True, exist_ok=True)
 LLM_INPUT_DIR.mkdir(parents=True, exist_ok=True)
 RULE_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-RULE_COLUMNS = ["EXT_S001", "EXT_S002", "EXT_S003", "EXT_E001", "EXT_E002", "EXT_E003", "EXT_E004", "EXT_E005", "EXT_E006"]
 
 # 참조 데이터 갱신
 def make_refer_data():
@@ -76,7 +74,8 @@ def load_refer_data():
 def save_llm_input_data(input_data, output_path, output_data):
 
     # 룰 컬럼 중 하나라도 Y인 문장 탐지
-    rule_hits = output_data[RULE_COLUMNS].any(axis=1)
+    rule_columns = [column for column in output_data.columns if column.startswith(("EXT_S", "EXT_E")) and not column.endswith("_PATTERN")]
+    rule_hits = output_data[rule_columns].any(axis=1)
 
     # 중복 기사 ID 제거
     target_doc_ids = set(output_data.loc[rule_hits, "doc_id"].dropna()) 
@@ -116,9 +115,16 @@ def save_llm_input_data(input_data, output_path, output_data):
     return llm_input_data
 
 # 룰 검출 파이프라인
-def run_pipeline(input_data, update_refer_data=False):
-    
+def run_pipeline(input_data, run_id, update_refer_data=False):
+
     input_path = Path(input_data)
+    
+    # 실행별 저장 경로 생성
+    rule_output_dir = RULE_OUTPUT_DIR / run_id
+    llm_input_dir = LLM_INPUT_DIR / run_id
+
+    rule_output_dir.mkdir(parents=True, exist_ok=True)
+    llm_input_dir.mkdir(parents=True, exist_ok=True)
 
     # 참조 데이터 로드
     if update_refer_data: make_refer_data()
@@ -146,10 +152,10 @@ def run_pipeline(input_data, update_refer_data=False):
     #----------------------------------------
 
     # 룰 검출 결과 저장
-    output_data.to_pickle(RULE_OUTPUT_DIR / f"{input_path.stem}.pkl")
+    output_data.to_pickle(rule_output_dir / f"{input_path.stem}.pkl")
     
     # LLM 검수 대상 기사 저장
-    save_llm_input_data(input_path, LLM_INPUT_DIR / f"{input_path.stem}.pkl", output_data)
+    save_llm_input_data(input_path, llm_input_dir / f"{input_path.stem}.pkl", output_data)
     
     return output_data
 
@@ -157,7 +163,8 @@ def run_pipeline(input_data, update_refer_data=False):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="NER rule review 데이터 생성")
     parser.add_argument("input_data", type=Path)
+    parser.add_argument("--run-id", required=True, help="실행 ID")
     parser.add_argument("--update", action="store_true", help="참조 데이터 갱신")
     args = parser.parse_args()
-
-    spand_time(run_pipeline, input_data=args.input_data, update_refer_data=args.update)
+    
+    spand_time(run_pipeline, input_data=args.input_data, run_id=args.run_id, update_refer_data=args.update)

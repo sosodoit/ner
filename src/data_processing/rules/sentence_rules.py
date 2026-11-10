@@ -7,17 +7,20 @@
 
 # 계엄이 포함된 문장
 def ext_s001(output_data):
-    output_data["EXT_S001"] = output_data["form"].str.contains("계엄")
+    forms = output_data["form"].fillna("").astype(str)
+    output_data["EXT_S001"] = forms.str.contains("계엄", na=False)
     return output_data
 
 # 태깅된 개체명이 없는 문장 추출
 def ext_s002(output_data):
     pattern = r"<[^<>:]+:\s*(?:PS|LC|OG|AF|EV|DT)>"
-    output_data["EXT_S002"] = ~output_data["form"].str.contains(pattern)
+    forms = output_data["form"].fillna("").astype(str)
+    output_data["EXT_S002"] = ~forms.str.contains(pattern, na=False)
     return output_data
 
 # <개체명: DT>이 연속해서 존재하는 문장
 def ext_s003(output_data):
     pattern = r"<[^<>:]+:\s*DT>(?:\s*<[^<>:]+:\s*DT>)+"
-    output_data["EXT_S003"] = output_data["form"].str.contains(pattern)
+    forms = output_data["form"].fillna("").astype(str)
+    output_data["EXT_S003"] = forms.str.contains(pattern, na=False)
     return output_data

@@ -26,7 +26,7 @@ def ext_e002(output_data):
 # <개체명: 태그> 중 오태깅 사전에 등록된 개체명
 def ext_e003(output_data, mistag_data):
     form_values = output_data["form"].fillna("")
-    entity_names = output_data["entity_name"]
+    entity_names = output_data["entity_name"].fillna("").astype(str)
 
     # 동일 패턴의 정규식 탐지 결과 재사용
     pattern_cache = {}
@@ -45,12 +45,12 @@ def ext_e003(output_data, mistag_data):
         pattern_col = f"{result_col}_PATTERN"
 
         output_data[result_col] = [
-            True if any(entity_name in match for match in matches) else False
+            bool(entity_name) and any(entity_name in match for match in matches)
             for matches, entity_name in zip(pattern_search, entity_names)
         ]
 
         output_data[pattern_col] = [
-            ", ".join(match for match in matches if entity_name in match)
+            ", ".join(match for match in matches if entity_name and entity_name in match)
             for matches, entity_name in zip(pattern_search, entity_names)
         ]
 
@@ -60,7 +60,7 @@ def ext_e003(output_data, mistag_data):
 def ext_e004(output_data, tag_data):
     tag_data_ = tag_data[tag_data["rule_id"].eq("EXT_E004")]
     form_values = output_data["form"].fillna("")
-    entity_taggings = output_data["entity_tagging"]
+    entity_taggings = output_data["entity_tagging"].fillna("").astype(str)
 
     # 동일 패턴의 정규식 탐지 결과 재사용
     pattern_cache = {}
@@ -79,15 +79,15 @@ def ext_e004(output_data, tag_data):
         pattern_col = f"{result_col}_PATTERN"
 
         output_data[result_col] = [
-            True if any(entity_tagging in match for match in patterns) else False
+            bool(entity_tagging) and any(entity_tagging in match for match in patterns)
             for patterns, entity_tagging in zip(pattern_search, entity_taggings)
         ]
 
         output_data[pattern_col] = [
-            ", ".join(pattern for pattern in patterns if entity_tagging in pattern)
+            ", ".join(pattern for pattern in patterns if entity_tagging and entity_tagging in pattern)
             for patterns, entity_tagging in zip(pattern_search, entity_taggings)
         ]
-
+        
     return output_data
 
 # <개체명: EV> 중 DT 표현이 포함된 개체명
@@ -109,8 +109,11 @@ def ext_e005(output_data, tag_data):
         output_data[result_col] = False
         output_data[pattern_col] = ""
 
-        output_data.loc[ev_mask, result_col] = pattern_search.map(lambda matches: True if matches else False)
-        output_data.loc[ev_mask, pattern_col] = pattern_search.map(", ".join)
+        if not ev_mask.any():
+            continue
+
+        output_data.loc[ev_mask, result_col] = pattern_search.map(bool).to_numpy(dtype=bool)
+        output_data.loc[ev_mask, pattern_col] = pattern_search.map(", ".join).to_numpy(dtype=object)
 
     return output_data
 
@@ -119,8 +122,8 @@ def ext_e006(output_data, tag_data):
     tag_data_ = tag_data[tag_data["rule_id"].eq("EXT_E006")]
     ev_mask = output_data["entity_type"].eq("EV")
 
-    forms = output_data["form"].fillna("")
-    entity_taggings = output_data["entity_tagging"].fillna("")
+    forms = output_data["form"].fillna("").astype(str)
+    entity_taggings = output_data["entity_tagging"].fillna("").astype(str)
 
     for rule in tag_data_.itertuples(index=False):
         rule_id = rule.rule_id
@@ -137,7 +140,7 @@ def ext_e006(output_data, tag_data):
         ]
         
         output_data[pattern_col] = [
-            ", ".join(match for match in matches if tagging in match)
+            ", ".join(match for match in matches if tagging and tagging in match)
             for matches, tagging in zip(pattern_search, entity_taggings)
         ]
 
