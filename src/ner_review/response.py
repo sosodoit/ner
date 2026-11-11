@@ -2,6 +2,7 @@
 # ***************************************************
 # * 모듈명: NER LLM 검수 실행
 # * 작성일: 2026-11-08
+# * 수정일: 2026-11-11 (입력 구성 정리, 오류 행만 수신, corrected_sentences 제거)
 # * 설명: 룰 기반 필터링 데이터를 대상으로 기사별 LLM 검수
 # ***************************************************
 import os
@@ -19,6 +20,8 @@ from langsmith.wrappers import wrap_openai
 from .prompt import build_system_prompt
 from .result import (
     build_result,
+    strip_tags,
+    build_fallback_result,
     safe_error_message,
     save_review_result,
     write_jsonl,
@@ -70,6 +73,10 @@ def create_client():
     elif API_PROVIDER == "OPENROUTER":
         api_key = os.getenv("OPENROUTER_API_KEY")
         base_url = "https://openrouter.ai/api/v1"
+    elif API_PROVIDER == "CLAUDE":
+        from anthropic import Anthropic
+
+        return Anthropic(api_key=os.getenv("CLAUDE_API_KEY"))
     else:
         raise ValueError(f"지원하지 않는 API_PROVIDER: {API_PROVIDER}")
 
@@ -86,6 +93,22 @@ def create_model_caller(client):
     @traceable(name="ner_review", run_type="chain")
     def call_model(instructions, article_input):
         try:
+            if API_PROVIDER == "CLAUDE":
+                return client.messages.create(
+                    model=MODEL_NAME,
+                    max_tokens=16384,
+                    system=instructions,
+                    messages=[
+                        {"role": "user", "content": article_input},
+                    ],
+                    output_config={
+                        "format": {
+                            "type": "json_schema",
+                            "schema": RESPONSE_SCHEMA,
+                        }
+                    },
+                )
+
             return client.responses.create(
                 model=MODEL_NAME,
                 instructions=instructions,
@@ -112,10 +135,17 @@ def extract_sentences(document):
             "sentence_id": sentence["id"],
             "text": sentence["form"],
             "entities": sentence.get("entities", []),
+            "sentence_rule_evidence": sentence.get("sentence_rule_evidence", []),
         }
         for paragraph in document["paragraph"]
         for sentence in paragraph["sentence"]
     ]
+
+# ***************************************************
+# * 사전 근거 표기
+# ***************************************************
+def format_evidence(evidence):
+    return json.dumps(evidence, ensure_ascii=False) if evidence else "없음"
 
 # ***************************************************
 # * 기사별 검수 입력 구성
@@ -123,46 +153,34 @@ def extract_sentences(document):
 def prepare_document(document, system_prompt=None):
     sentences = extract_sentences(document)
 
-    # 기사 전체 원문 구성
+    # 기사 전체 원문 (태그 표기 제거, 문맥 판단용)
     article_text = "\n".join(
-        f"[{item['sentence_id']}] {item['text']}"
+        f"[{item['sentence_id']}] {strip_tags(item['text'])}"
         for item in sentences
     )
 
-    # 검수 대상 문장 구성
+    # 문장별 기존 태깅과 사전 근거 (target_span 복사 원천)
     review_blocks = []
     for item in sentences:
-        if not item["entities"]:
-            continue
-
         entity_lines = [
             f"- entity_id: {entity['entity_id']} | "
             f"target_span: {entity['target_span']} | "
-            f"target_type: {entity['target_type']}"
+            f"target_type: {entity['target_type']} | "
+            f"rule_evidence: {format_evidence(entity.get('rule_evidence'))}"
             for entity in item["entities"]
-        ]
-        
+        ] or ["- entity_id: null | 기존 태깅 없음"]
+
         review_blocks.append(
             f"[{item['sentence_id']}] {item['text']}\n"
-            f"검수 대상:\n" + "\n".join(entity_lines)
+            f"sentence_rule_evidence: {format_evidence(item.get('sentence_rule_evidence'))}\n"
+            + "\n".join(entity_lines)
         )
 
     article_input = (
         "# ARTICLE\n"
-        "다음은 기사의 전체 원문이다.\n\n"
         f"{article_text}\n\n"
         "# REVIEW_TARGETS\n"
-        "다음은 문장별 대상과 기존 개체명 태깅 정보이다.\n"
-        "모든 문장을 검수 대상으로 확인한다.\n\n"
-        + ("\n\n".join(review_blocks) if review_blocks else "- 기존 태깅 없음")
-        + "\n\n"
-        "# REVIEW_GUIDELINES\n"
-        "- 각 문장에 포함된 모든 개체명을 함께 확인하고 문장 전체 맥락에서 통합적으로 판단한다.\n"
-        "- 동일 문장 내 개체명 간 관계와 태그 범위를 함께 고려한다.\n"
-        "- 개체명별 검수 결과는 각 entity_id에 연결하여 반환한다.\n"
-        "- 하나의 개체명 수정이 다른 개체명의 범위나 태그에 영향을 주는 경우 함께 검토한다.\n"
-        "- 모든 개체명 검수 결과를 종합하여 해당 문장의 최종 수정 결과를 작성한다.\n"
-        "- 최종 수정 문장은 검수 결과를 모두 반영하되, 오류가 없는 부분은 원문을 그대로 유지한다."
+        + "\n\n".join(review_blocks)
     )
 
     if system_prompt is None:
@@ -172,6 +190,25 @@ def prepare_document(document, system_prompt=None):
     return article_input, system_prompt, sentences
 
 # ***************************************************
+# * 응답 텍스트 추출
+# ***************************************************
+def read_response_text(response):
+    # 출력 한도 도달 등으로 응답이 잘리면 정상 미출력과 구분할 수 없으므로 실패 처리
+    if getattr(response, "status", None) == "incomplete":
+        raise ResponseParseError("LLM response incomplete")
+    if API_PROVIDER == "CLAUDE":
+        if getattr(response, "stop_reason", None) == "max_tokens":
+            raise ResponseParseError("LLM response incomplete")
+        for content in getattr(response, "content", []):
+            if getattr(content, "type", None) == "text":
+                return content.text
+        raise ResponseParseError("Claude response has no text content")
+    try:
+        return response.output_text
+    except AttributeError as exc:
+        raise ResponseParseError("LLM response has no output_text") from exc
+
+# ***************************************************
 # * 기사별 LLM 검수
 # ***************************************************
 def review_file(input_file, output_root, run_id, data_version, call_model, system_prompt=None):
@@ -179,10 +216,8 @@ def review_file(input_file, output_root, run_id, data_version, call_model, syste
     outlet_dir.mkdir(parents=True, exist_ok=True)
 
     output_file = outlet_dir / "reviews.jsonl"
-    corrected_sentence_file = outlet_dir / "corrected_sentences.jsonl"
     response_error_file = outlet_dir / "response_errors.jsonl"
     review_rows = []
-    corrected_sentence_rows = []
     if input_file.suffix in {".pkl", ".pickle"}:
         article = pd.read_pickle(input_file)
     else:
@@ -190,31 +225,24 @@ def review_file(input_file, output_root, run_id, data_version, call_model, syste
 
     with (
         output_file.open("w", encoding="utf-8") as result_file,
-        corrected_sentence_file.open("w", encoding="utf-8") as corrected_output,
         response_error_file.open("w", encoding="utf-8") as error_output,
     ):
         for document in article["document"]:
             article_input, document_system_prompt, sentences = prepare_document(document, system_prompt)
             raw_response = None
+            load_dt = datetime.now(ZoneInfo("Asia/Seoul")).date().isoformat()
             try:
                 response = call_model(document_system_prompt, article_input)
-                try:
-                    raw_response = response.output_text
-                except AttributeError as exc:
-                    raise ResponseParseError("LLM response has no output_text") from exc
+                raw_response = read_response_text(response)
                 try:
                     response_data = json.loads(raw_response)
                 except (TypeError, json.JSONDecodeError) as exc:
                     raise ResponseParseError("LLM response is not valid JSON") from exc
                 result = build_result(response_data, sentences)
             except Exception as exc:
-                save_review_result(
-                    result_file,
-                    corrected_output,
-                    document,
-                    run_id,
-                    sentences,
-                )
+                result = build_fallback_result(sentences)
+                review_rows.extend(build_parquet_rows(result, document, run_id, input_file.stem, load_dt))
+                save_review_result(result_file, document, run_id, sentences, result=result)
                 if isinstance(exc, ApiRequestError):
                     error_type = "API_ERROR"
                 elif isinstance(exc, ResponseParseError):
@@ -237,27 +265,11 @@ def review_file(input_file, output_root, run_id, data_version, call_model, syste
                 )
                 continue
 
-            current_review_rows, current_corrected_sentence_rows = build_parquet_rows(
-                result,
-                document,
-                run_id,
-                input_file.stem,
-                datetime.now(ZoneInfo("Asia/Seoul")).date().isoformat(),
-            )
-            review_rows.extend(current_review_rows)
-            corrected_sentence_rows.extend(current_corrected_sentence_rows)
-
-            save_review_result(
-                result_file,
-                corrected_output,
-                document,
-                run_id,
-                sentences,
-                result=result,
-            )
+            review_rows.extend(build_parquet_rows(result, document, run_id, input_file.stem, load_dt))
+            save_review_result(result_file, document, run_id, sentences, result=result)
             logging.info(f"검수완료: {document['id']}")
 
-    save_parquet_results(outlet_dir, review_rows, corrected_sentence_rows)
+    save_parquet_results(outlet_dir, review_rows)
     logging.info(f"결과저장완료: {outlet_dir}")
 
 # ***************************************************
@@ -296,13 +308,11 @@ def run_pipeline(data_version=None):
         review_file(input_file, output_root, run_id, data_version, call_model, system_prompt)
 
 def main():
-    parser = argparse.ArgumentParser(description="NER 개체명 태깅 검수")
+    parser = argparse.ArgumentParser(description="NER 개체명 검수 실행")
     parser.add_argument("--data-version")
     args = parser.parse_args()
 
-    # 검수 파이프라인 실행
     run_pipeline(args.data_version)
-
 
 if __name__ == "__main__":
     main()

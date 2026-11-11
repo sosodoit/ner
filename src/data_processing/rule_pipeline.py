@@ -90,15 +90,46 @@ def save_llm_input_data(input_data, output_path, output_data):
 
     # 문장별 개체명 정보 구성
     entity_index = {}
+    sentence_rule_index = {}
     entity_columns = ["doc_id", "sentence_id", "entity_id", "entity_tagging", "entity_type"]
     entity_rows = output_data.loc[output_data["entity_id"].notna(), entity_columns]
+    entity_rule_columns = [
+        column for column in output_data.columns
+        if column.startswith("EXT_E") and not column.endswith("_PATTERN")
+    ]
+    sentence_rule_columns = [
+        column for column in output_data.columns
+        if column.startswith("EXT_S") and not column.endswith("_PATTERN")
+    ]
     for row in entity_rows.to_dict("records"):
         key = (row["doc_id"], row["sentence_id"])
+        source_row = output_data[
+            (output_data["doc_id"] == row["doc_id"])
+            & (output_data["sentence_id"] == row["sentence_id"])
+            & (output_data["entity_id"] == row["entity_id"])
+        ].iloc[0]
+        rule_evidence = [
+            {
+                "rule_id": column,
+                "pattern": source_row.get(f"{column}_PATTERN", ""),
+            }
+            for column in entity_rule_columns
+            if bool(source_row[column])
+        ]
         entity_index.setdefault(key, []).append({
             "entity_id": row["entity_id"],
             "target_span": row["entity_tagging"],
             "target_type": row["entity_type"],
+            "rule_evidence": rule_evidence,
         })
+
+    for row in output_data.drop_duplicates(["doc_id", "sentence_id"]).to_dict("records"):
+        key = (row["doc_id"], row["sentence_id"])
+        sentence_rule_index[key] = [
+            {"rule_id": column, "pattern": row.get(f"{column}_PATTERN", "")}
+            for column in sentence_rule_columns
+            if bool(row[column])
+        ]
 
     # 원본 문장에 개체명 정보 추가
     for document in selected_documents:
@@ -106,6 +137,7 @@ def save_llm_input_data(input_data, output_path, output_data):
             for sentence in paragraph["sentence"]:
                 key = (document["id"], sentence["id"])
                 sentence["entities"] = entity_index.get(key, [])
+                sentence["sentence_rule_evidence"] = sentence_rule_index.get(key, [])
 
     llm_input_data = {key: value for key, value in source.items() if key != "document"}
     llm_input_data["document"] = selected_documents
