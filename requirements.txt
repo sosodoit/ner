@@ -7,3 +7,4 @@ psycopg[binary]
 google-api-python-client
 langsmith
 streamlit
+pyarrow

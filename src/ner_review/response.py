@@ -17,8 +17,15 @@ from datetime import datetime
 from langsmith import traceable
 from langsmith.wrappers import wrap_openai
 from .prompt import build_system_prompt
-from .result import normalize_reviews, normalize_sentences, safe_error_message, save_review_result, write_jsonl
+from .result import (
+    build_result,
+    safe_error_message,
+    save_review_result,
+    write_jsonl,
+    write_response_error,
+)
 from .schema import RESPONSE_SCHEMA
+from .storage import build_parquet_rows, save_parquet_results, save_run_parquet
 
 BASE_DIR = Path(__file__).resolve().parents[2]
 DATA_ROOT = BASE_DIR / "data"
@@ -30,6 +37,12 @@ DATA_VERSION = os.getenv("DATA_VERSION")
 API_PROVIDER = os.getenv("API_PROVIDER")
 MODEL_NAME = os.getenv("MODEL_NAME")
 PROMPT_VERSION = os.getenv("PROMPT_VERSION")
+
+class ApiRequestError(RuntimeError):
+    """LLM API 호출 실패."""
+
+class ResponseParseError(ValueError):
+    """LLM 응답 JSON 파싱 실패."""
 
 
 # ***************************************************
@@ -87,7 +100,7 @@ def create_model_caller(client):
                 }
             )
         except Exception:
-            raise RuntimeError("LLM API request failed") from None
+            raise ApiRequestError("LLM API request failed") from None
     return call_model
 
 # ***************************************************
@@ -107,7 +120,7 @@ def extract_sentences(document):
 # ***************************************************
 # * 기사별 검수 입력 구성
 # ***************************************************
-def prepare_document(document):
+def prepare_document(document, system_prompt=None):
     sentences = extract_sentences(document)
 
     # 기사 전체 원문 구성
@@ -152,7 +165,8 @@ def prepare_document(document):
         "- 최종 수정 문장은 검수 결과를 모두 반영하되, 오류가 없는 부분은 원문을 그대로 유지한다."
     )
 
-    system_prompt = build_system_prompt(PROMPT_DIR)
+    if system_prompt is None:
+        system_prompt = build_system_prompt(PROMPT_DIR)
     logging.info(f"프롬프트 적용완료: 문서={document['id']}")
 
     return article_input, system_prompt, sentences
@@ -160,28 +174,39 @@ def prepare_document(document):
 # ***************************************************
 # * 기사별 LLM 검수
 # ***************************************************
-def review_file(input_file, output_root, run_id, data_version, call_model):
+def review_file(input_file, output_root, run_id, data_version, call_model, system_prompt=None):
     outlet_dir = output_root / input_file.stem
     outlet_dir.mkdir(parents=True, exist_ok=True)
 
     output_file = outlet_dir / "reviews.jsonl"
     corrected_sentence_file = outlet_dir / "corrected_sentences.jsonl"
+    response_error_file = outlet_dir / "response_errors.jsonl"
+    review_rows = []
+    corrected_sentence_rows = []
     if input_file.suffix in {".pkl", ".pickle"}:
         article = pd.read_pickle(input_file)
     else:
         article = json.loads(input_file.read_text(encoding="utf-8-sig"))
 
-    with (output_file.open("w", encoding="utf-8") as result_file, corrected_sentence_file.open("w", encoding="utf-8") as corrected_output):
+    with (
+        output_file.open("w", encoding="utf-8") as result_file,
+        corrected_sentence_file.open("w", encoding="utf-8") as corrected_output,
+        response_error_file.open("w", encoding="utf-8") as error_output,
+    ):
         for document in article["document"]:
-            article_input, system_prompt, sentences = prepare_document(document)
+            article_input, document_system_prompt, sentences = prepare_document(document, system_prompt)
+            raw_response = None
             try:
-                response = call_model(system_prompt, article_input)
-                response_data = json.loads(response.output_text)
-                result = {
-                    "reviews": normalize_reviews(response_data["reviews"], sentences),
-                    "corrected_sentences": normalize_sentences(response_data["corrected_sentences"], sentences)
-                }
-                
+                response = call_model(document_system_prompt, article_input)
+                try:
+                    raw_response = response.output_text
+                except AttributeError as exc:
+                    raise ResponseParseError("LLM response has no output_text") from exc
+                try:
+                    response_data = json.loads(raw_response)
+                except (TypeError, json.JSONDecodeError) as exc:
+                    raise ResponseParseError("LLM response is not valid JSON") from exc
+                result = build_result(response_data, sentences)
             except Exception as exc:
                 save_review_result(
                     result_file,
@@ -190,11 +215,37 @@ def review_file(input_file, output_root, run_id, data_version, call_model):
                     run_id,
                     sentences,
                 )
+                if isinstance(exc, ApiRequestError):
+                    error_type = "API_ERROR"
+                elif isinstance(exc, ResponseParseError):
+                    error_type = "JSON_PARSE_ERROR"
+                elif isinstance(exc, ValueError):
+                    error_type = "VALIDATION_ERROR"
+                else:
+                    error_type = "POSTPROCESS_ERROR"
+                write_response_error(
+                    error_output,
+                    run_id,
+                    document["id"],
+                    error_type,
+                    exc,
+                    raw_response,
+                )
                 logging.error(
-                    f"LLM 검수 실패: {document['id']} | "
+                    f"LLM 검수 실패: {document['id']} | {error_type} | "
                     f"{safe_error_message(exc)} | 다음 문서로 진행"
                 )
                 continue
+
+            current_review_rows, current_corrected_sentence_rows = build_parquet_rows(
+                result,
+                document,
+                run_id,
+                input_file.stem,
+                datetime.now(ZoneInfo("Asia/Seoul")).date().isoformat(),
+            )
+            review_rows.extend(current_review_rows)
+            corrected_sentence_rows.extend(current_corrected_sentence_rows)
 
             save_review_result(
                 result_file,
@@ -206,6 +257,7 @@ def review_file(input_file, output_root, run_id, data_version, call_model):
             )
             logging.info(f"검수완료: {document['id']}")
 
+    save_parquet_results(outlet_dir, review_rows, corrected_sentence_rows)
     logging.info(f"결과저장완료: {outlet_dir}")
 
 # ***************************************************
@@ -215,28 +267,33 @@ def run_pipeline(data_version=None):
     configure_logging()
     client = create_client()
     call_model = create_model_caller(client)
+    system_prompt = build_system_prompt(PROMPT_DIR)
     run_id = f"run_{datetime.now(ZoneInfo('Asia/Seoul')).strftime('%Y%m%d_%H%M%S')}"
 
     data_version = data_version or DATA_VERSION
-    data_dir = DATA_ROOT / data_version
+    data_dir = DATA_ROOT / "filter" / "llm_input_data" / data_version
+    if not data_dir.is_dir():
+        data_dir = DATA_ROOT / data_version
     input_files = sorted(data_dir.glob("*.pkl"))
 
     output_root = BASE_DIR / "outputs" / data_version / run_id / "reports"
     output_root.mkdir(parents=True, exist_ok=True)
 
     run_file = output_root.parent / "run.jsonl"
+    run_metadata = {
+        "run_id": run_id,
+        "provider": API_PROVIDER,
+        "model": MODEL_NAME,
+        "prompt_version": PROMPT_VERSION,
+        "data_version": data_version,
+        "load_dt": datetime.now(ZoneInfo("Asia/Seoul")).date().isoformat(),
+    }
     with run_file.open("w", encoding="utf-8") as output:
-        write_jsonl(output, {
-            "run_id": run_id,
-            "provider": API_PROVIDER,
-            "model": MODEL_NAME,
-            "prompt_version": PROMPT_VERSION,
-            "data_version": data_version,
-            "load_dt": datetime.now(ZoneInfo("Asia/Seoul")).date().isoformat(),
-        })
+        write_jsonl(output, run_metadata)
+    save_run_parquet(output_root.parent / "ner_runs.parquet", run_metadata)
 
     for input_file in input_files:
-        review_file(input_file, output_root, run_id, data_version, call_model)
+        review_file(input_file, output_root, run_id, data_version, call_model, system_prompt)
 
 def main():
     parser = argparse.ArgumentParser(description="NER 개체명 태깅 검수")
