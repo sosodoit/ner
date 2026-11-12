@@ -16,7 +16,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 from datetime import datetime
 from langsmith import traceable
-from langsmith.wrappers import wrap_openai
+from langsmith.wrappers import wrap_anthropic, wrap_openai
 from .prompt import build_system_prompt
 from .result import (
     build_result,
@@ -76,7 +76,8 @@ def create_client():
     elif API_PROVIDER == "CLAUDE":
         from anthropic import Anthropic
 
-        return Anthropic(api_key=os.getenv("CLAUDE_API_KEY"))
+        client = Anthropic(api_key=os.getenv("CLAUDE_API_KEY"))
+        return wrap_anthropic(client)
     else:
         raise ValueError(f"지원하지 않는 API_PROVIDER: {API_PROVIDER}")
 

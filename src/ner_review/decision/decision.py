@@ -11,6 +11,8 @@ from pathlib import Path
 
 import pandas as pd
 from openai import OpenAI
+from langsmith import traceable
+from langsmith.wrappers import wrap_openai
 
 from .prompt import build_decision_questions, build_decision_system_prompt
 
@@ -19,10 +21,11 @@ DECISION_MODEL = "gpt-6-luna"
 ENTITY_PATTERN = re.compile(r"<([^<>:]+):\s*(PS|LC|OG|AF|EV|DT)>")
 
 
+@traceable(name="ner_decision", run_type="chain")
 def call_decision(article_input, sentence_id, rule_ids, client=None, model=None):
     """입력 기사에 대해 선택한 Decisions 질문을 실행한다."""
     rule_ids = list(rule_ids)
-    client = client or OpenAI()
+    client = client or wrap_openai(OpenAI())
     decision = client.decisions.create(
         model=model or DECISION_MODEL,
         input=[
@@ -198,11 +201,11 @@ def run_pipeline(input_path, output_root=None, press=None, article_index=None, s
         raise FileNotFoundError(f"언론사 파일을 찾지 못했습니다: {press}")
     if output_root is None:
         run_id = f"run_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-        output_root = Path(__file__).resolve().parents[2] / "outputs" / "decision" / run_id
+        output_root = Path(__file__).resolve().parents[3] / "outputs" / "decision" / run_id
     output_root = Path(output_root)
     output_root.mkdir(parents=True, exist_ok=True)
     run_id = output_root.name
-    client = OpenAI()
+    client = wrap_openai(OpenAI())
     all_rows = []
     for input_file in input_files:
         if article_index is None:

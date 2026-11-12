@@ -110,8 +110,18 @@ def extract_run_data(run, project_name=""):
     prompt_token_details = getattr(run, "prompt_token_details", {}) or {}
     if not isinstance(prompt_token_details, dict):
         prompt_token_details = getattr(prompt_token_details, "raw", {}) or {}
-    cached_input_tokens = first_value(getattr(run, "cached_tokens", None), prompt_token_details.get("cached_tokens"), find_token_detail(usage, "cached_tokens", "cache_read_tokens"))
-    cache_write_tokens = first_value(getattr(run, "cache_write_tokens", None), prompt_token_details.get("cache_write_tokens"), find_token_detail(usage, "cache_write_tokens", "cache_creation_tokens"))
+    cached_input_tokens = first_value(
+        getattr(run, "cached_tokens", None),
+        prompt_token_details.get("cached_tokens"),
+        prompt_token_details.get("cache_read_input_tokens"),
+        find_token_detail(usage, "cached_tokens", "cache_read_tokens", "cache_read_input_tokens"),
+    )
+    cache_write_tokens = first_value(
+        getattr(run, "cache_write_tokens", None),
+        prompt_token_details.get("cache_write_tokens"),
+        prompt_token_details.get("cache_creation_input_tokens"),
+        find_token_detail(usage, "cache_write_tokens", "cache_creation_tokens", "cache_creation_input_tokens"),
+    )
 
     total_cost = first_value(getattr(run, "total_cost", None), usage.get("total_cost"))
     input_cost = first_value(getattr(run, "prompt_cost", None), usage.get("input_cost"), usage.get("prompt_cost"), cost_details.get("upstream_inference_input_cost"))
