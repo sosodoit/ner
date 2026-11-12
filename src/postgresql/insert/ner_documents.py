@@ -11,6 +11,7 @@
 # ***************************************************
 import json
 import argparse
+import pickle
 from pathlib import Path
 from psycopg.types.json import Jsonb
 from src.config import get_postgre_connect
@@ -32,8 +33,15 @@ def drop_table():
     print("ner_documents 테이블 삭제 완료")
 
 # 정보 추출
-def make_document_rows(input_path):
-    input_data = json.loads(Path(input_path).read_text(encoding="utf-8-sig"))
+def make_document_rows(input_path, data_version=None):
+    if not data_version:
+        raise ValueError("data_version 인자가 필요합니다.")
+    input_path = Path(input_path)
+    if input_path.suffix == ".pkl":
+        with input_path.open("rb") as file:
+            input_data = pickle.load(file)
+    else:
+        input_data = json.loads(input_path.read_text(encoding="utf-8-sig"))
     corpus_metadata = Jsonb(input_data.get("metadata"))
     rows = []
 
@@ -44,6 +52,7 @@ def make_document_rows(input_path):
             for sentence_order, sentence in enumerate(paragraph["sentence"], start=1):
                 rows.append(
                     (
+                        data_version,
                         document["id"],
                         document_order,
                         paragraph["id"],
@@ -64,13 +73,14 @@ def make_document_rows(input_path):
     return rows
 
 # 적재
-def insert_ner_documents(input_path):
-    rows = make_document_rows(input_path)
+def insert_ner_documents(input_path, data_version=None):
+    rows = make_document_rows(input_path, data_version=data_version)
     if not rows:
         return 0
 
     insert_sql = """
         INSERT INTO ner_documents (
+            data_version,
             doc_id,
             document_order,
             paragraph_id,
@@ -87,7 +97,7 @@ def insert_ner_documents(input_path):
             sentence_order
         )
         VALUES (
-            %s, %s, %s, %s,
+            %s, %s, %s, %s, %s,
             %s, %s, %s, %s, %s, %s, %s,
             %s, %s, %s
         )
@@ -116,6 +126,7 @@ def insert_ner_documents(input_path):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("input_path")
+    parser.add_argument("--data-version", required=True)
     parser.add_argument("--create-table", action="store_true", help="테이블 생성")
     parser.add_argument("--reset-table", action="store_true", help="기존 테이블 삭제 후 재생성")
     args = parser.parse_args()
@@ -130,7 +141,7 @@ def main():
     elif args.create_table:
         create_table()
 
-    row_count = insert_ner_documents(args.input_path)
+    row_count = insert_ner_documents(args.input_path, data_version=args.data_version)
     print(f"ner_documents 적재 완료: {row_count}건")
 
 

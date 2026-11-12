@@ -1,6 +1,6 @@
 CREATE TABLE IF NOT EXISTS ner_rule_results (
     -- 주요 식별 정보
-    run_id TEXT NOT NULL,
+    data_version TEXT NOT NULL,
     doc_id TEXT NOT NULL,
     sentence_id TEXT NOT NULL,
     entity_id TEXT,
@@ -17,7 +17,7 @@ CREATE TABLE IF NOT EXISTS ner_rule_results (
     -- 중복 방지
     CONSTRAINT uq_ner_rule_results
         UNIQUE NULLS NOT DISTINCT (
-            run_id,
+            data_version,
             doc_id,
             sentence_id,
             entity_id
@@ -28,8 +28,8 @@ CREATE TABLE IF NOT EXISTS ner_rule_results (
         REFERENCES ner_documents (doc_id, sentence_id)
 );
 
-CREATE INDEX IF NOT EXISTS idx_ner_rule_results_run_id
-    ON ner_rule_results (run_id);
+CREATE INDEX IF NOT EXISTS idx_ner_rule_results_data_version
+    ON ner_rule_results (data_version);
 
 CREATE INDEX IF NOT EXISTS idx_ner_rule_results_doc_sentence
     ON ner_rule_results (doc_id, sentence_id);

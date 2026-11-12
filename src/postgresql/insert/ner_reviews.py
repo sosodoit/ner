@@ -12,6 +12,7 @@ from src.config import get_postgre_connect
 BASE_DIR = Path(__file__).resolve().parents[3]
 SCHEMA_PATH = BASE_DIR / "src/postgresql/schema/ner_reviews.sql"
 PARQUET_NAME = "ner_reviews.parquet"
+CSV_NAME = "ner_reviews.csv"
 COLUMNS = (
     "run_id", "doc_id", "sentence_id", "entity_id", "target_span", "target_type",
     "corrected_span", "error_lv1", "error_lv2", "reason", "review_needed",
@@ -32,21 +33,35 @@ def drop_table():
     print("ner_reviews 테이블 삭제 완료")
 
 
-def _resolve_parquet(input_path):
+def _resolve_input(input_path):
     input_path = Path(input_path)
-    return input_path / PARQUET_NAME if input_path.is_dir() else input_path
+    if not input_path.is_dir():
+        return input_path
+    parquet_path = input_path / PARQUET_NAME
+    csv_path = input_path / CSV_NAME
+    if parquet_path.exists():
+        return parquet_path
+    return csv_path
 
 
-def make_review_rows(input_path):
-    data = pd.read_parquet(_resolve_parquet(input_path))
+def make_review_rows(input_path, run_id=None):
+    input_path = _resolve_input(input_path)
+    data = pd.read_parquet(input_path) if input_path.suffix == ".parquet" else pd.read_csv(input_path)
+    if "run_id" not in data.columns:
+        if run_id is None:
+            raise ValueError("CSV 입력에는 run_id가 없어 run_id 인자가 필요합니다.")
+        data["run_id"] = run_id
+    for column in COLUMNS:
+        if column not in data.columns:
+            data[column] = None
     return [
         tuple(None if pd.isna(value) else value for value in row)
         for row in data[list(COLUMNS)].itertuples(index=False, name=None)
     ]
 
 
-def insert_ner_reviews(input_path):
-    rows = make_review_rows(input_path)
+def insert_ner_reviews(input_path, run_id=None):
+    rows = make_review_rows(input_path, run_id=run_id)
     if not rows:
         return 0
 
@@ -77,6 +92,7 @@ def insert_ner_reviews(input_path):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("input_path")
+    parser.add_argument("--run-id")
     parser.add_argument("--create-table", action="store_true")
     parser.add_argument("--reset-table", action="store_true")
     args = parser.parse_args()
@@ -90,7 +106,7 @@ def main():
     elif args.create_table:
         create_table()
 
-    row_count = insert_ner_reviews(args.input_path)
+    row_count = insert_ner_reviews(args.input_path, run_id=args.run_id)
     print(f"ner_reviews 적재 완료: {row_count}건")
 
 

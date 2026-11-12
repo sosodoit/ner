@@ -1,5 +1,6 @@
 CREATE TABLE IF NOT EXISTS ner_documents (
     -- 주요 식별 정보
+    data_version TEXT NOT NULL,
     doc_id TEXT NOT NULL,
     document_order INTEGER NOT NULL,
     paragraph_id TEXT NOT NULL,

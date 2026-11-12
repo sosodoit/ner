@@ -48,9 +48,10 @@ def _make_rule_results(row, rule_columns):
         for rule in rule_columns
     }
 
-def make_rule_result_rows(input_dir):
+def make_rule_result_rows(input_dir, data_version=None):
     input_dir = Path(input_dir)
-    run_id = input_dir.name
+    if not data_version:
+        raise ValueError("data_version 인자가 필요합니다.")
     rows = []
     rule_files = sorted(input_dir.glob("*.pkl"))
 
@@ -68,7 +69,7 @@ def make_rule_result_rows(input_dir):
         for _, row in rule_data.drop_duplicates(subset=["doc_id", "sentence_id"]).iterrows():
             rows.append(
                 (
-                    run_id,
+                    data_version,
                     row["doc_id"],
                     row["sentence_id"],
                     None,
@@ -80,7 +81,7 @@ def make_rule_result_rows(input_dir):
         for _, row in rule_data.loc[rule_data["entity_id"].notna()].iterrows():
             rows.append(
                 (
-                    run_id,
+                    data_version,
                     row["doc_id"],
                     row["sentence_id"],
                     row["entity_id"],
@@ -92,14 +93,14 @@ def make_rule_result_rows(input_dir):
     return rows
 
 
-def insert_ner_rule_results(input_dir):
-    rows = make_rule_result_rows(input_dir)
+def insert_ner_rule_results(input_dir, data_version=None):
+    rows = make_rule_result_rows(input_dir, data_version=data_version)
     if not rows:
         return 0
 
     insert_sql = """
         INSERT INTO ner_rule_results (
-            run_id,
+            data_version,
             doc_id,
             sentence_id,
             entity_id,
@@ -107,7 +108,7 @@ def insert_ner_rule_results(input_dir):
             rule_results
         )
         VALUES (%s, %s, %s, %s, %s, %s)
-        ON CONFLICT (run_id, doc_id, sentence_id, entity_id) DO UPDATE SET
+        ON CONFLICT (data_version, doc_id, sentence_id, entity_id) DO UPDATE SET
             rule_unit = EXCLUDED.rule_unit,
             rule_results = EXCLUDED.rule_results
     """
@@ -122,6 +123,7 @@ def insert_ner_rule_results(input_dir):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("input_dir")
+    parser.add_argument("--data-version", required=True)
     parser.add_argument("--create-table", action="store_true")
     parser.add_argument("--reset-table", action="store_true")
     args = parser.parse_args()
@@ -136,7 +138,7 @@ def main():
     elif args.create_table:
         create_table()
 
-    row_count = insert_ner_rule_results(args.input_dir)
+    row_count = insert_ner_rule_results(args.input_dir, data_version=args.data_version)
     print(f"ner_rule_results 적재 완료: {row_count}건")
 
 
