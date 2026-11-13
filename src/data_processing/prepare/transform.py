@@ -5,17 +5,20 @@
 # * 설명: 원본 데이터를 룰 검출용 데이터프레임으로 변환
 # ***************************************************
 import json
+from pathlib import Path
+
 import pandas as pd
 
 def sentence_data(input_data):
     with open(input_data, "r", encoding="utf-8") as f:
         data = json.load(f)
+    source_id = data.get("id", Path(input_data).stem)
     rows = []
     for doc in data["document"]:
         for paragraph in doc["paragraph"]:
             for sentence in paragraph["sentence"]:
                 rows.append({
-                    "id": data["id"],
+                    "id": source_id,
                     "doc_id": doc["id"],
                     "sentence_id": sentence["id"],
                     "form": sentence["form"]

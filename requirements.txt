@@ -3,6 +3,7 @@ openai
 anthropic
 openpyxl
 pandas
+ijson
 google-cloud-bigquery
 psycopg[binary]
 google-api-python-client
