@@ -8,6 +8,20 @@ import re
 import numpy as np
 import pandas as pd
 
+
+def _cached_regex_matches(form_values, pattern, pattern_cache):
+    """같은 form에 대한 정규식 검색 결과를 재사용합니다."""
+    if pattern not in pattern_cache:
+        regex = re.compile(pattern)
+        unique_forms = form_values.drop_duplicates()
+        pattern_cache[pattern] = {
+            form: [match.group(0) for match in regex.finditer(form)]
+            for form in unique_forms
+        }
+
+    return form_values.map(pattern_cache[pattern])
+
+
 # 과거 오류 이력의 빈도가 높았던 개체명
 def ext_e001(output_data, error_data):
     error_pairs = pd.MultiIndex.from_frame(error_data[["entity_name_no_space", "entity_type"]].drop_duplicates())
@@ -36,11 +50,7 @@ def ext_e003(output_data, mistag_data):
         sub_rule_id = rule.sub_rule_id
         pattern = str(rule.pattern).strip()
 
-        if pattern not in pattern_cache:
-            regex = re.compile(pattern)
-            pattern_cache[pattern] = form_values.map(lambda form: [match.group(0) for match in regex.finditer(form)])
-
-        pattern_search = pattern_cache[pattern]
+        pattern_search = _cached_regex_matches(form_values, pattern, pattern_cache)
         result_col = f"{rule_id}_{sub_rule_id}"
         pattern_col = f"{result_col}_PATTERN"
 
@@ -70,11 +80,7 @@ def ext_e004(output_data, tag_data):
         sub_rule_id = rule.sub_rule_id
         pattern = str(rule.pattern).strip()
 
-        if pattern not in pattern_cache:
-            regex = re.compile(pattern)
-            pattern_cache[pattern] = form_values.map(lambda form: [match.group(0) for match in regex.finditer(form)])
-
-        pattern_search = pattern_cache[pattern]
+        pattern_search = _cached_regex_matches(form_values, pattern, pattern_cache)
         result_col = f"{rule_id}_{sub_rule_id}"
         pattern_col = f"{result_col}_PATTERN"
 
@@ -124,6 +130,7 @@ def ext_e006(output_data, tag_data):
 
     forms = output_data["form"].fillna("").astype(str)
     entity_taggings = output_data["entity_tagging"].fillna("").astype(str)
+    pattern_cache = {}
 
     for rule in tag_data_.itertuples(index=False):
         rule_id = rule.rule_id
@@ -131,8 +138,11 @@ def ext_e006(output_data, tag_data):
         result_col = f"{rule_id}_{sub_rule_id}"
         pattern_col = f"{result_col}_PATTERN"
 
-        regex = re.compile(str(rule.pattern).strip())
-        pattern_search = forms.map(lambda form: [match.group(0) for match in regex.finditer(form)])
+        pattern_search = _cached_regex_matches(
+            forms,
+            str(rule.pattern).strip(),
+            pattern_cache,
+        )
 
         output_data[result_col] = [
             True if tagging and any(tagging in match for match in matches) else False
