@@ -1,0 +1,1 @@
+"""NER Streamlit application package."""
