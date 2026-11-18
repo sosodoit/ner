@@ -51,21 +51,15 @@ def _to_db_value(column, value):
 
 def _make_insert_sql(columns):
     insert_columns = ["data_version", *columns]
-    column_sql = sql.SQL(", ").join(
-        sql.Identifier(column) for column in insert_columns
-    )
-    placeholders = sql.SQL(", ").join(
-        sql.Placeholder() for _ in insert_columns
-    )
+    column_sql = sql.SQL(", ").join(sql.Identifier(column) for column in insert_columns)
+    placeholders = sql.SQL(", ").join(sql.Placeholder() for _ in insert_columns)
     update_columns = [
         column
         for column in columns
         if column not in {"doc_id", "sentence_id", "entity_id"}
     ]
     update_sql = sql.SQL(", ").join(
-        sql.SQL("{column} = EXCLUDED.{column}").format(
-            column=sql.Identifier(column)
-        )
+        sql.SQL("{column} = EXCLUDED.{column}").format(column=sql.Identifier(column))
         for column in update_columns
     )
     return sql.SQL("""
@@ -105,6 +99,23 @@ def insert_ner_rule_results_2(input_dir, data_version, chunk_size=1000):
         raise FileNotFoundError(f"candidate_rule_results.csv가 없습니다: {result_path}")
 
     columns = list(pd.read_csv(result_path, encoding="utf-8-sig", nrows=0).columns)
+    
+    # 테이블 컬럼명 매칭(이미 DB 컬럼명과 동일한 경우 유지됨)
+    column_mapping = {
+        "EXT_E005_  EV_001": "EXT_E005_EV_001",
+        "EXT_E005_  EV_002": "EXT_E005_EV_002",
+        "EXT_E005_  EV_003": "EXT_E005_EV_003",
+        "EXT_E005_  EV_004": "EXT_E005_EV_004",
+        "EXT_E005_  EV_005": "EXT_E005_EV_005",
+        "EXT_E005_  EV_001_PATTERN": "EXT_E005_EV_001_PATTERN",
+        "EXT_E005_  EV_002_PATTERN": "EXT_E005_EV_002_PATTERN",
+        "EXT_E005_  EV_003_PATTERN": "EXT_E005_EV_003_PATTERN",
+        "EXT_E005_  EV_004_PATTERN": "EXT_E005_EV_004_PATTERN",
+        "EXT_E005_  EV_005_PATTERN": "EXT_E005_EV_005_PATTERN",
+    }
+
+    columns = [column_mapping.get(col, col) for col in columns]
+
     insert_sql = _make_insert_sql(columns)
     total = 0
 
