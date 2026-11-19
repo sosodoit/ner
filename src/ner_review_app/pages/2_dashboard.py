@@ -268,7 +268,6 @@ def render_review_statistics(data):
                 progress = float(press_summary["progress"])
 
                 with st.expander(f"{press} · 기사 {int(press_summary['article_count']):,}건 · 진행률 {progress:.1f}%"):
-
                     st.markdown("**검수 방식별 진행률**")
                     press_method_display = _prepare_method_summary(method_summary, press)[
                         [
