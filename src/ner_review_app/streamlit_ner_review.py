@@ -66,6 +66,6 @@ for sentence_id in sorted({review["sentence_id"] for review in reviews}):
                 }
                 for review in sentence_reviews
             ],
-            use_container_width=True,
+            width="stretch",
             hide_index=True,
         )

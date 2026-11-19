@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """언론사별 휴먼 검수 현황 화면"""
 import sys
+import os
 import pandas as pd
 import streamlit as st
 from pathlib import Path
@@ -13,6 +14,7 @@ from src.config.postgredb import get_postgre_connect
 
 METHOD_ORDER = ["일괄처리", "LLM검수", "휴먼검수"]
 METHOD_DISPLAY_NAMES = {"일괄처리": "일괄처리", "LLM검수": "휴먼검수", "휴먼검수": "계엄기사"}
+ASSIGNMENT_PASSWORD_ENV = "NER_ASSIGNMENT_PASSWORD"
 
 
 def _fetch_dataframe(cursor, query):
@@ -60,18 +62,72 @@ def load_review_data():
         GROUP BY COALESCE(press, '미상'), review_method
         ORDER BY press, review_method
     """
+    assignment_query = """
+        SELECT
+            COALESCE(press, '미상') AS press,
+            COALESCE(NULLIF(BTRIM(assignee), ''), '미배정') AS assignee,
+            COUNT(DISTINCT (data_version, doc_id))::BIGINT AS article_count
+        FROM ner_human_review
+        GROUP BY COALESCE(press, '미상'), COALESCE(NULLIF(BTRIM(assignee), ''), '미배정')
+        ORDER BY press, assignee
+    """
 
     with get_postgre_connect() as connection:
         with connection.cursor() as cursor:
             summary = _fetch_dataframe(cursor, summary_query)
             articles = _fetch_dataframe(cursor, article_query)
             method_summary = _fetch_dataframe(cursor, method_query)
+            assignments = _fetch_dataframe(cursor, assignment_query)
 
     return {
         "summary": summary,
         "articles": articles,
         "method_summary": method_summary,
+        "assignments": assignments,
     }
+
+
+def assign_articles(press, assignee, article_count, password):
+    expected_password = os.getenv(ASSIGNMENT_PASSWORD_ENV, "")
+    if not expected_password or password != expected_password:
+        return False, "비밀번호가 올바르지 않거나 서버에 배정 비밀번호가 설정되지 않았습니다."
+
+    target_query = """
+        SELECT data_version, press, doc_id
+        FROM ner_human_review
+        WHERE press = %s
+          AND (assignee IS NULL OR BTRIM(assignee) = '')
+        GROUP BY data_version, press, doc_id
+        ORDER BY data_version, doc_id
+        LIMIT %s
+    """
+    update_query = """
+        WITH target_articles AS (
+            SELECT data_version, press, doc_id
+            FROM ner_human_review
+            WHERE press = %s
+              AND (assignee IS NULL OR BTRIM(assignee) = '')
+            GROUP BY data_version, press, doc_id
+            ORDER BY data_version, doc_id
+            LIMIT %s
+        )
+        UPDATE ner_human_review AS h
+        SET assignee = %s
+        FROM target_articles AS t
+        WHERE h.data_version = t.data_version
+          AND h.press = t.press
+          AND h.doc_id = t.doc_id
+    """
+
+    with get_postgre_connect() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(target_query, (press, article_count))
+            assigned_count = len(cursor.fetchall())
+            if assigned_count == 0:
+                return True, "배정할 미배정 기사가 없습니다."
+            cursor.execute(update_query, (press, article_count, assignee))
+
+    return True, f"{assigned_count:,}건의 기사를 {assignee} 담당으로 배정했습니다."
 
 
 def _prepare_summary(summary):
@@ -139,7 +195,7 @@ def render_review_statistics(data):
         st.info("표시할 검수 데이터가 없습니다.")
         return
 
-    tab1, tab2 = st.tabs(["언론사별 검수 현황", "언론사별 기사 목록"])
+    tab1, tab2, tab3 = st.tabs(["언론사별 검수 현황", "언론사별 기사 목록", "담당자 배정"])
     with tab1:
         #---------------------------------------------------------------------------------------------------------
         # 본문 - 언론사별 검수 현황 
@@ -241,7 +297,7 @@ def render_review_statistics(data):
                     styled_summary = styled_summary.set_properties(subset=[column], **{"background-color": color})
             st.dataframe(
                 styled_summary,
-                use_container_width=True,
+                width="stretch",
                 hide_index=True,
                 height=(len(display_summary) + 1) * 35 + 3,
                 column_config={
@@ -302,7 +358,7 @@ def render_review_statistics(data):
 
                     st.dataframe(
                         press_method_display,
-                        use_container_width=True,
+                        width="stretch",
                         hide_index=True,
                         column_config={"진행률": st.column_config.ProgressColumn("진행률", min_value=0, max_value=100, format="%.1f%%")}
                     )
@@ -332,7 +388,72 @@ def render_review_statistics(data):
                         }
                     )
 
-                    st.dataframe(article_display, use_container_width=True, hide_index=True)
+                    st.dataframe(article_display, width="stretch", hide_index=True)
+
+    with tab3:
+        #---------------------------------------------------------------------------------------------------------
+        # 본문 - 담당자 배정
+        #---------------------------------------------------------------------------------------------------------
+        with st.container(border=True):
+            st.markdown("**담당자 배정**")
+
+            assignments = data["assignments"].copy()
+            assignment_display = assignments.rename(
+                columns={
+                    "press": "언론사",
+                    "assignee": "담당자",
+                    "article_count": "배정 기사 수",
+                }
+            )
+            st.dataframe(assignment_display, width="stretch", hide_index=True)
+
+            st.divider()
+            st.markdown("**미배정 기사 배정**")
+
+            press_options = sorted(assignments["press"].dropna().unique().tolist())
+            press_options = [press for press in press_options if press != "미상"]
+            existing_assignees = sorted(
+                assignee
+                for assignee in assignments["assignee"].dropna().unique()
+                if assignee != "미배정"
+            )
+
+            if not press_options:
+                st.info("배정 가능한 언론사가 없습니다.")
+            else:
+                assign_col1, assign_col2, assign_col3 = st.columns(3)
+                with assign_col1:
+                    selected_assignment_press = st.selectbox("언론사", press_options)
+                with assign_col2:
+                    selected_assignee = st.text_input(
+                        "담당자",
+                        value=existing_assignees[0] if existing_assignees else "",
+                    )
+                with assign_col3:
+                    assignment_count = st.number_input(
+                        "배정 기사 수",
+                        min_value=1,
+                        value=1,
+                        step=1,
+                    )
+
+                assignment_password = st.text_input("배정 비밀번호", type="password")
+                if st.button("기사 배정", type="primary"):
+                    if not selected_assignee.strip():
+                        st.error("담당자를 입력해 주세요.")
+                    else:
+                        success, message = assign_articles(
+                            selected_assignment_press,
+                            selected_assignee.strip(),
+                            int(assignment_count),
+                            assignment_password,
+                        )
+                        if success:
+                            load_review_data.clear()
+                            st.success(message)
+                            st.rerun()
+                        else:
+                            st.error(message)
 
 
 try:

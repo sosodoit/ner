@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+import os
 import re
 import html
 import hashlib
@@ -122,6 +123,42 @@ RULE_NAMES = {
 
 RULE_TYPES = list(RULES_BY_TYPE)
 PAGE_SIZE = 10
+REVIEWER_CREDENTIAL_ENV_PREFIX = "NER_REVIEWER_"
+
+
+def get_reviewer_credentials():
+    credentials = {}
+    for index in range(1, 5):
+        name = os.getenv(f"{REVIEWER_CREDENTIAL_ENV_PREFIX}{index}_NAME")
+        password = os.getenv(f"{REVIEWER_CREDENTIAL_ENV_PREFIX}{index}_PASSWORD")
+        if name and password:
+            credentials[name] = password
+    return credentials
+
+
+def authenticate_reviewer():
+    credentials = get_reviewer_credentials()
+    authenticated_assignee = st.session_state.get("authenticated_assignee")
+    if authenticated_assignee in credentials:
+        return authenticated_assignee
+
+    st.info("NER 검수 담당자 인증")
+    if not credentials:
+        st.error("검수 담당자 계정이 설정되지 않았습니다.")
+        st.stop()
+
+    with st.form("reviewer_login"):
+        assignee = st.selectbox("담당자", sorted(credentials))
+        password = st.text_input("비밀번호", type="password")
+        submitted = st.form_submit_button("검수 화면 입장", type="primary")
+
+    if submitted:
+        if credentials.get(assignee) == password:
+            st.session_state.authenticated_assignee = assignee
+            st.rerun()
+        st.error("담당자 또는 비밀번호가 올바르지 않습니다.")
+
+    st.stop()
 
 
 def review_widget_key(prefix, sentence_key):
@@ -155,7 +192,7 @@ def mark_no_issue_if_unmodified(status_key, modified_key, original_form):
     st.session_state[modified_key] = original_form
 
 
-def save_review_page(review_updates):
+def save_review_page(review_updates, assignee):
     """현재 페이지의 검수 결과를 ner_human_review에 저장한다."""
     query = """
         UPDATE public.ner_human_review
@@ -170,11 +207,12 @@ def save_review_page(review_updates):
           AND press = %s
           AND doc_id = %s
           AND sentence_id = %s
+          AND assignee = %s
     """
 
     with get_postgre_connect() as conn:
         with conn.cursor() as cursor:
-            cursor.executemany(query, review_updates)
+            cursor.executemany(query, [(*update, assignee) for update in review_updates])
 
 @st.cache_data(ttl=86400, show_spinner=False)
 def fetch_press_versions():
@@ -205,11 +243,12 @@ def fetch_rule_results(
     limit,
     offset,
     review_method=None,
+    assignee=None,
 ):
     condition = " OR ".join(f'r."{rule}" IS TRUE' for rule in selected_rules)
     review_method_condition = ""
     join_review_method_condition = ""
-    query_params = [selected_press, data_versions]
+    query_params = [selected_press, data_versions, assignee]
     if review_method:
         review_method_condition = "AND h.review_method = %s"
         join_review_method_condition = "AND h.review_method = %s"
@@ -256,6 +295,7 @@ def fetch_rule_results(
             WHERE h.press = %s
               AND h.data_version = ANY(%s)
               AND h.doc_id IS NOT NULL
+              AND h.assignee = %s
               {review_method_condition}
               {rule_match_condition}
         ), target_docs AS (
@@ -286,6 +326,7 @@ def fetch_rule_results(
         JOIN public.ner_human_review AS h
           ON h.data_version = t.data_version
          AND h.press = t.press
+         AND h.assignee = %s
          AND h.doc_id = t.doc_id
          {join_review_method_condition}
         LEFT JOIN public.ner_rule_results_3 AS r
@@ -300,9 +341,9 @@ def fetch_rule_results(
     with get_postgre_connect() as conn:
         rows = conn.execute(
             query,
-            (*query_params, limit, offset, review_method)
+            (*query_params, limit, offset, assignee, review_method)
             if review_method
-            else (*query_params, limit, offset),
+            else (*query_params, limit, offset, assignee),
         ).fetchall()
     filtered_article_count = int(rows[0]["filtered_article_count"]) if rows else 0
     return rows, filtered_article_count
@@ -408,6 +449,7 @@ def document_sort_key(document_key):
 # -----------------------------------------------------------------------------
 # 데이터 조회
 # -----------------------------------------------------------------------------
+authenticated_assignee = authenticate_reviewer()
 ner_header_placeholder = st.empty()
 
 try:
@@ -450,7 +492,7 @@ def multi_select_filter(label, options, default, format_func, key):
     # 기존 selectbox와 유사한 드롭다운
     with st.sidebar.popover(
         f"{label} ({len(selected)}개 선택)",
-        use_container_width=True,
+        width="stretch",
     ):
         col1, col2 = st.columns(2)
 
@@ -458,7 +500,7 @@ def multi_select_filter(label, options, default, format_func, key):
             st.button(
                 "전체 선택",
                 key=f"{key}_select_all",
-                use_container_width=True,
+                width="stretch",
                 on_click=set_all_checkboxes,
                 args=(options, key, True),
             )
@@ -467,7 +509,7 @@ def multi_select_filter(label, options, default, format_func, key):
             st.button(
                 "전체 해제",
                 key=f"{key}_clear_all",
-                use_container_width=True,
+                width="stretch",
                 on_click=set_all_checkboxes,
                 args=(options, key, False),
             )
@@ -494,7 +536,7 @@ if requested_press in press_options:
 elif st.session_state.get("selected_press") not in press_options:
     st.session_state.selected_press = press_options[0]
 
-with st.sidebar.popover(f"언론사 ({st.session_state.selected_press})", use_container_width=True):
+with st.sidebar.popover(f"언론사 ({st.session_state.selected_press})", width="stretch"):
     selected_press = st.radio(
         "언론사 선택",
         press_options,
@@ -520,7 +562,7 @@ if st.session_state.get("selected_review_method_display") not in review_method_o
 
 with st.sidebar.popover(
     f"검수 방식 ({st.session_state.selected_review_method_display})",
-    use_container_width=True,
+    width="stretch",
 ):
     st.radio(
         "검수 방식 선택",
@@ -704,6 +746,7 @@ try:
         PAGE_SIZE + 1,
         offset,
         selected_review_method,
+        authenticated_assignee,
     )
 except Exception as exc:
     st.error(f"룰 검출 결과 조회 실패: {exc}")
@@ -769,6 +812,7 @@ if display_doc_keys:
 else:
     selected_doc_key = None
     st.sidebar.info("조건에 해당하는 기사가 없습니다.")
+    st.info("현재 담당자로 배정된 기사가 없습니다.")
 
 # 페이지 이동 영역
 st.sidebar.markdown(
@@ -817,7 +861,7 @@ with prev_col:
     st.button(
         "‹",
         disabled=offset == 0,
-        use_container_width=True,
+        width="stretch",
         help="이전 페이지",
         key="previous_doc_page",
         on_click=lambda: st.session_state.update(
@@ -846,7 +890,7 @@ with next_col:
     st.button(
         "›",
         disabled=not has_next,
-        use_container_width=True,
+        width="stretch",
         help="다음 페이지",
         key="next_doc_page",
         on_click=lambda: st.session_state.update(
@@ -857,7 +901,7 @@ with next_col:
 save_clicked = st.sidebar.button(
         "데이터 저장",
         key="save_review_button",
-        use_container_width=True,
+        width="stretch",
         help="현재 페이지의 검수 내용을 DB에 저장합니다.",
     )
 
@@ -886,7 +930,7 @@ if save_clicked:
             )
         )
 
-    save_review_page(review_updates)
+    save_review_page(review_updates, authenticated_assignee)
     fetch_rule_results.clear()
     st.rerun()
 
@@ -900,7 +944,7 @@ def render_sentence_layout(idx, sentence_key, item, sentence_id, matches):
 
     edit_col, rule_col = st.columns([3, 1])
     with edit_col:
-        with st.container(border=True):
+        with st.container(border=True, height=410):
             st.markdown(f"`문장 {idx:02d}: {sentence_id}` `검수 상태: {status}`")
             st.markdown('<div style="margin-bottom:0.35rem; font-weight:600;">원문</div>', unsafe_allow_html=True)
             st.markdown(
@@ -919,7 +963,7 @@ def render_sentence_layout(idx, sentence_key, item, sentence_id, matches):
                 st.button(
                     "수정완료",
                     key=review_widget_key("complete_modified", sentence_key),
-                    use_container_width=True,
+                    width="stretch",
                     on_click=mark_review_complete_if_modified,
                     args=(status_key, modified_key, item["original_form"]),
                 )
@@ -927,14 +971,14 @@ def render_sentence_layout(idx, sentence_key, item, sentence_id, matches):
                 st.button(
                     "이상없음",
                     key=review_widget_key("complete_no_issue", sentence_key),
-                    use_container_width=True,
+                    width="stretch",
                     disabled=st.session_state.get(modified_key, "") != item["original_form"],
                     on_click=mark_no_issue_if_unmodified,
                     args=(status_key, modified_key, item["original_form"]),
                 )
 
     with rule_col:
-        with st.container(border=True):
+        with st.container(border=True, height=410):
             st.markdown(
                 """
                 <div style="font-size:14px; font-weight:600; margin-bottom:4px;">
