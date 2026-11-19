@@ -24,7 +24,7 @@ def _fetch_dataframe(cursor, query):
     return pd.DataFrame(rows, columns=columns)
 
 
-@st.cache_data(ttl=86400, show_spinner=False)
+@st.cache_data(ttl=3600, show_spinner=False)
 def load_review_data():
     """ner_human_review의 집계와 기사 목록을 캐시 가능한 형태로 조회한다."""
     summary_query = """
@@ -66,10 +66,14 @@ def load_review_data():
         SELECT
             COALESCE(press, '미상') AS press,
             COALESCE(NULLIF(BTRIM(assignee), ''), '미배정') AS assignee,
+            review_method,
             COUNT(DISTINCT (data_version, doc_id))::BIGINT AS article_count
         FROM ner_human_review
-        GROUP BY COALESCE(press, '미상'), COALESCE(NULLIF(BTRIM(assignee), ''), '미배정')
-        ORDER BY press, assignee
+        GROUP BY
+            COALESCE(press, '미상'),
+            COALESCE(NULLIF(BTRIM(assignee), ''), '미배정'),
+            review_method
+        ORDER BY press, assignee, review_method
     """
 
     with get_postgre_connect() as connection:
@@ -87,27 +91,27 @@ def load_review_data():
     }
 
 
-def assign_articles(press, assignee, article_count, password):
+def assign_articles(press, review_method, assignee, article_count, password):
     expected_password = os.getenv(ASSIGNMENT_PASSWORD_ENV, "")
     if not expected_password or password != expected_password:
         return False, "비밀번호가 올바르지 않거나 서버에 배정 비밀번호가 설정되지 않았습니다."
 
     target_query = """
-        SELECT data_version, press, doc_id
+        SELECT data_version, press, doc_id, review_method
         FROM ner_human_review
         WHERE press = %s
-          AND (assignee IS NULL OR BTRIM(assignee) = '')
-        GROUP BY data_version, press, doc_id
+          AND review_method = %s
+        GROUP BY data_version, press, doc_id, review_method
         ORDER BY data_version, doc_id
         LIMIT %s
     """
     update_query = """
         WITH target_articles AS (
-            SELECT data_version, press, doc_id
+            SELECT data_version, press, doc_id, review_method
             FROM ner_human_review
             WHERE press = %s
-              AND (assignee IS NULL OR BTRIM(assignee) = '')
-            GROUP BY data_version, press, doc_id
+              AND review_method = %s
+            GROUP BY data_version, press, doc_id, review_method
             ORDER BY data_version, doc_id
             LIMIT %s
         )
@@ -117,17 +121,18 @@ def assign_articles(press, assignee, article_count, password):
         WHERE h.data_version = t.data_version
           AND h.press = t.press
           AND h.doc_id = t.doc_id
+          AND h.review_method = t.review_method
     """
 
     with get_postgre_connect() as connection:
         with connection.cursor() as cursor:
-            cursor.execute(target_query, (press, article_count))
+            cursor.execute(target_query, (press, review_method, article_count))
             assigned_count = len(cursor.fetchall())
             if assigned_count == 0:
-                return True, "배정할 미배정 기사가 없습니다."
-            cursor.execute(update_query, (press, article_count, assignee))
+                return True, "배정할 기사가 없습니다."
+            cursor.execute(update_query, (press, review_method, article_count, assignee))
 
-    return True, f"{assigned_count:,}건의 기사를 {assignee} 담당으로 배정했습니다."
+    return True, f"{assigned_count:,}건의 기사를 {assignee} 담당으로 배정/재배정했습니다."
 
 
 def _prepare_summary(summary):
@@ -186,7 +191,7 @@ def render_review_statistics(data):
 
         with refresh_col:
             if st.button("", icon=":material/refresh:", help="최신 데이터로 새로고침", type="tertiary"):
-                load_review_data.clear()
+                st.cache_data.clear()
                 st.rerun()
 
         st.caption("※ :material/refresh: 클릭시 최신 데이터로 갱신됩니다. (기준테이블: `ner_human_review`)")
@@ -395,20 +400,75 @@ def render_review_statistics(data):
         # 본문 - 담당자 배정
         #---------------------------------------------------------------------------------------------------------
         with st.container(border=True):
-            st.markdown("**담당자 배정**")
+            st.markdown("**배정 현황**")
 
             assignments = data["assignments"].copy()
-            assignment_display = assignments.rename(
+            grouping_columns = ["press", "review_method"]
+            assigned = assignments[assignments["assignee"] != "미배정"]
+            assigned_display = (
+                assigned.groupby(grouping_columns + ["assignee"], as_index=False)["article_count"]
+                .sum()
+            )
+            all_method_rows = assignments[grouping_columns].drop_duplicates()
+            assigned_method_rows = assigned_display[grouping_columns].drop_duplicates()
+            missing_method_rows = all_method_rows.merge(
+                assigned_method_rows,
+                on=grouping_columns,
+                how="left",
+                indicator=True,
+            )
+            missing_method_rows = missing_method_rows[
+                missing_method_rows["_merge"] == "left_only"
+            ][grouping_columns]
+            if not missing_method_rows.empty:
+                missing_method_rows = missing_method_rows.assign(
+                    assignee="미배정",
+                    article_count=0,
+                )
+                assigned_display = pd.concat(
+                    [assigned_display, missing_method_rows],
+                    ignore_index=True,
+                )
+
+            unassigned_counts = (
+                assignments[assignments["assignee"] == "미배정"]
+                .groupby(grouping_columns, as_index=False)["article_count"]
+                .sum()
+                .rename(columns={"article_count": "unassigned_article_count"})
+            )
+            assignment_display = assigned_display.merge(
+                unassigned_counts,
+                on=grouping_columns,
+                how="left",
+            )
+            assignment_display["unassigned_article_count"] = (
+                assignment_display["unassigned_article_count"].fillna(0).astype(int)
+            )
+            assignment_display = assignment_display.rename(
                 columns={
                     "press": "언론사",
+                    "review_method": "검수방식",
                     "assignee": "담당자",
                     "article_count": "배정 기사 수",
+                    "unassigned_article_count": "미배정 기사 수",
                 }
             )
+            assignment_display["검수방식"] = assignment_display["검수방식"].map(
+                lambda method: METHOD_DISPLAY_NAMES.get(method, method)
+            )
+            assignment_display = assignment_display[
+                [
+                    "언론사",
+                    "검수방식",
+                    "담당자",
+                    "배정 기사 수",
+                    "미배정 기사 수",
+                ]
+            ]
             st.dataframe(assignment_display, width="stretch", hide_index=True)
 
             st.divider()
-            st.markdown("**미배정 기사 배정**")
+            st.markdown("**기사 배정/재배정**")
 
             press_options = sorted(assignments["press"].dropna().unique().tolist())
             press_options = [press for press in press_options if press != "미상"]
@@ -421,15 +481,21 @@ def render_review_statistics(data):
             if not press_options:
                 st.info("배정 가능한 언론사가 없습니다.")
             else:
-                assign_col1, assign_col2, assign_col3 = st.columns(3)
+                assign_col1, assign_col2, assign_col3, assign_col4 = st.columns(4)
                 with assign_col1:
                     selected_assignment_press = st.selectbox("언론사", press_options)
                 with assign_col2:
+                    selected_assignment_method = st.selectbox(
+                        "검수방식",
+                        METHOD_ORDER,
+                        format_func=lambda method: METHOD_DISPLAY_NAMES.get(method, method),
+                    )
+                with assign_col3:
                     selected_assignee = st.text_input(
                         "담당자",
                         value=existing_assignees[0] if existing_assignees else "",
                     )
-                with assign_col3:
+                with assign_col4:
                     assignment_count = st.number_input(
                         "배정 기사 수",
                         min_value=1,
@@ -444,6 +510,7 @@ def render_review_statistics(data):
                     else:
                         success, message = assign_articles(
                             selected_assignment_press,
+                            selected_assignment_method,
                             selected_assignee.strip(),
                             int(assignment_count),
                             assignment_password,

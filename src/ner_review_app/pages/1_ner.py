@@ -3,6 +3,7 @@ import os
 import re
 import html
 import hashlib
+import hmac
 import streamlit as st
 from src.ner_review_app.modules.postgredb import get_postgre_connect
 
@@ -124,6 +125,9 @@ RULE_NAMES = {
 RULE_TYPES = list(RULES_BY_TYPE)
 PAGE_SIZE = 10
 REVIEWER_CREDENTIAL_ENV_PREFIX = "NER_REVIEWER_"
+REVIEWER_QUERY_PARAM = "reviewer"
+REVIEWER_TOKEN_QUERY_PARAM = "reviewer_token"
+BATCH_REVIEW_METHOD = "일괄처리"
 
 
 def get_reviewer_credentials():
@@ -142,6 +146,18 @@ def authenticate_reviewer():
     if authenticated_assignee in credentials:
         return authenticated_assignee
 
+    query_assignee = st.query_params.get(REVIEWER_QUERY_PARAM)
+    query_token = st.query_params.get(REVIEWER_TOKEN_QUERY_PARAM)
+    if query_assignee in credentials and query_token:
+        expected_token = hmac.new(
+            credentials[query_assignee].encode("utf-8"),
+            query_assignee.encode("utf-8"),
+            hashlib.sha256,
+        ).hexdigest()
+        if hmac.compare_digest(query_token, expected_token):
+            st.session_state.authenticated_assignee = query_assignee
+            return query_assignee
+
     st.info("NER 검수 담당자 인증")
     if not credentials:
         st.error("검수 담당자 계정이 설정되지 않았습니다.")
@@ -155,6 +171,12 @@ def authenticate_reviewer():
     if submitted:
         if credentials.get(assignee) == password:
             st.session_state.authenticated_assignee = assignee
+            st.query_params[REVIEWER_QUERY_PARAM] = assignee
+            st.query_params[REVIEWER_TOKEN_QUERY_PARAM] = hmac.new(
+                password.encode("utf-8"),
+                assignee.encode("utf-8"),
+                hashlib.sha256,
+            ).hexdigest()
             st.rerun()
         st.error("담당자 또는 비밀번호가 올바르지 않습니다.")
 
@@ -166,6 +188,20 @@ def review_widget_key(prefix, sentence_key):
     return f"{prefix}_{key}"
 
 
+def review_value_key(sentence_key):
+    return review_widget_key("modified_value", sentence_key)
+
+
+def get_modified_form(sentence_key, item):
+    return st.session_state.get(
+        review_value_key(sentence_key),
+        st.session_state.get(
+            review_widget_key("modified_form", sentence_key),
+            item.get("modified_form") or item.get("original_form") or "",
+        ),
+    )
+
+
 def mark_no_issue(status_key, modified_key, original_form):
     st.session_state[status_key] = "완료"
     st.session_state[modified_key] = original_form
@@ -175,21 +211,112 @@ def mark_review_complete(status_key):
     st.session_state[status_key] = "완료"
 
 
-def mark_review_complete_if_modified(status_key, modified_key, original_form):
-    current_form = st.session_state.get(modified_key, "")
-    if current_form == original_form:
+def is_modified_form(current_form, original_form):
+    return (current_form or "") != (original_form or "")
+
+
+def highlighted_tag_spans(form, matches):
+    """Return tagged-entity spans which overlap the currently highlighted matches."""
+    form = form or ""
+    patterns = {
+        pattern_part.strip()
+        for _, pattern in matches
+        if pattern != "패턴 없음"
+        for pattern_part in re.split(r",\s*|\r?\n", str(pattern))
+        if pattern_part.strip()
+    }
+    if not patterns:
+        return []
+
+    highlighted_spans = []
+    for pattern in sorted(patterns, key=len, reverse=True):
+        highlighted_spans.extend(
+            (match.start(), match.end())
+            for match in re.finditer(re.escape(pattern), form)
+        )
+
+    tag_pattern = re.compile(r"<([^<>:]+?)\s*:\s*[^<>]+?>")
+    return [
+        match.span()
+        for match in tag_pattern.finditer(form)
+        if any(
+            tag_start < highlighted_end and highlighted_start < tag_end
+            for highlighted_start, highlighted_end in highlighted_spans
+            for tag_start, tag_end in [match.span()]
+        )
+    ]
+
+
+def convert_batch_form(form, matches=()):
+    """Convert only tagged entities included in the highlighted error matches."""
+    form = form or ""
+    target_spans = set(highlighted_tag_spans(form, matches))
+    tag_pattern = re.compile(r"<([^<>:]+?)\s*:\s*[^<>]+?>")
+
+    def replace_tag(match):
+        return match.group(1) if match.span() in target_spans else match.group(0)
+
+    return tag_pattern.sub(replace_tag, form)
+
+
+def apply_batch_processing(sentence_keys, grouped):
+    changed_count = 0
+    for sentence_key in sentence_keys:
+        item = grouped[sentence_key]
+        modified_key = review_widget_key("modified_form", sentence_key)
+        status_key = review_widget_key("review_status", sentence_key)
+        current_form = get_modified_form(sentence_key, item)
+        converted_form = convert_batch_form(current_form, item.get("matches", set()))
+        if converted_form != current_form:
+            st.session_state[review_value_key(sentence_key)] = converted_form
+            st.session_state[modified_key] = converted_form
+            st.session_state[status_key] = "미완료"
+            changed_count += 1
+
+    st.session_state["batch_processing_message"] = (
+        f"{changed_count:,}개 문장을 일괄처리했습니다. 내용을 확인한 후 일괄저장을 눌러주세요."
+    )
+
+
+def mark_review_complete_if_modified(
+    status_key,
+    modified_key,
+    original_form,
+    item=None,
+    assignee=None,
+    review_method=None,
+):
+    value_key = modified_key.replace("modified_form_", "modified_value_", 1)
+    current_form = st.session_state.get(modified_key, st.session_state.get(value_key, ""))
+    if not is_modified_form(current_form, original_form):
         st.toast("수정된 내용이 없습니다.")
         return
+    st.session_state[value_key] = current_form
     st.session_state[status_key] = "완료"
+    if item and assignee and review_method != BATCH_REVIEW_METHOD:
+        save_review_item(item, assignee, current_form, "완료")
+    st.toast("수정완료로 저장되었습니다.")
 
 
-def mark_no_issue_if_unmodified(status_key, modified_key, original_form):
-    current_form = st.session_state.get(modified_key, "")
-    if current_form != original_form:
+def mark_no_issue_if_unmodified(
+    status_key,
+    modified_key,
+    original_form,
+    item=None,
+    assignee=None,
+    review_method=None,
+):
+    value_key = modified_key.replace("modified_form_", "modified_value_", 1)
+    current_form = st.session_state.get(modified_key, st.session_state.get(value_key, ""))
+    if is_modified_form(current_form, original_form):
         st.toast("수정된 문장이 있습니다. 수정 후 완료를 선택해야합니다.")
         return
     st.session_state[status_key] = "완료"
     st.session_state[modified_key] = original_form
+    st.session_state[value_key] = original_form
+    if item and assignee and review_method != BATCH_REVIEW_METHOD:
+        save_review_item(item, assignee, original_form, "완료")
+    st.toast("이상없음으로 저장되었습니다.")
 
 
 def save_review_page(review_updates, assignee):
@@ -214,7 +341,43 @@ def save_review_page(review_updates, assignee):
         with conn.cursor() as cursor:
             cursor.executemany(query, [(*update, assignee) for update in review_updates])
 
-@st.cache_data(ttl=86400, show_spinner=False)
+
+def save_review_item(item, assignee, modified_form, review_status):
+    save_review_page(
+        [
+            (
+                modified_form,
+                review_status,
+                is_modified_form(modified_form, item.get("original_form")),
+                review_status,
+                item["data_version"],
+                item["press"],
+                item["doc_id"],
+                item["sentence_id"],
+            )
+        ],
+        assignee,
+    )
+    fetch_rule_results.clear()
+
+
+def save_review_draft(item, assignee, review_method=None):
+    sentence_key = (item["data_version"], item["doc_id"], item["sentence_id"])
+    modified_key = review_widget_key("modified_form", sentence_key)
+    status_key = review_widget_key("review_status", sentence_key)
+    modified_form = st.session_state.get(modified_key, "")
+    # 화면에서 사라진 text_area의 위젯 상태가 정리되어도 유지되도록 별도 상태에 보관한다.
+    st.session_state[review_value_key(sentence_key)] = modified_form
+    review_status = st.session_state.get(status_key, item.get("review_status") or "미완료")
+    if review_method == BATCH_REVIEW_METHOD:
+        # 일괄처리 모드는 완료 버튼과 일괄 저장 버튼이 상태 변경을 담당한다.
+        return
+    if is_modified_form(modified_form, item.get("original_form")):
+        review_status = "미완료"
+        st.session_state[status_key] = review_status
+    save_review_item(item, assignee, modified_form, review_status)
+
+@st.cache_data(ttl=3600, show_spinner=False)
 def fetch_press_versions():
     with get_postgre_connect() as conn:
         rows = conn.execute(
@@ -235,7 +398,7 @@ def fetch_press_versions():
     return press_versions
 
 
-@st.cache_data(ttl=86400, show_spinner=False)
+@st.cache_data(ttl=3600, show_spinner=False)
 def fetch_rule_results(
     selected_press,
     data_versions,
@@ -363,12 +526,14 @@ def group_sentences(rows, selected_rules):
 
         sentence_id = row["sentence_id"]
         data_version = row["data_version"]
+        press = row["press"]
         sentence_key = (data_version, doc_id, sentence_id)
 
         item = grouped.setdefault(
             sentence_key,
             {
                 "data_version": data_version,
+                "press": press,
                 "doc_id": doc_id,
                 "sentence_id": sentence_id,
                 "original_form": row.get("original_form") or "",
@@ -677,11 +842,6 @@ st.sidebar.markdown(
         font-weight: 400 !important;
     }
 
-    [data-testid="stSidebar"] button[aria-label="데이터 저장"] {
-        min-height: 44px !important;
-        height: 44px !important;
-    }
-
     /* 드롭다운 텍스트 좌측 정렬 */
     [data-testid="stSidebar"] [data-testid="stPopover"] > button > div {
         display: flex !important;
@@ -779,8 +939,11 @@ for sentence_key in visible_sentence_keys:
     modified_key = review_widget_key("modified_form", sentence_key)
     if status_key not in st.session_state:
         st.session_state[status_key] = item.get("review_status") or "미완료"
-    if modified_key not in st.session_state:
-        st.session_state[modified_key] = item.get("modified_form") or item.get("original_form") or ""
+    value_key = review_value_key(sentence_key)
+    if value_key not in st.session_state:
+        st.session_state[value_key] = item.get("modified_form") or item.get("original_form") or ""
+    # text_area 위젯은 기사 전환 시 제거될 수 있으므로 매 렌더링마다 영속 상태에서 복원한다.
+    st.session_state[modified_key] = st.session_state[value_key]
 
 # -----------------------------------------------------------------------------
 # 좌측 사이드바 - 검수 기사 목록 및 페이지 이동
@@ -898,42 +1061,6 @@ with next_col:
         ),
     )
 
-save_clicked = st.sidebar.button(
-        "데이터 저장",
-        key="save_review_button",
-        width="stretch",
-        help="현재 페이지의 검수 내용을 DB에 저장합니다.",
-    )
-
-if save_clicked:
-    review_updates = []
-    for sentence_key in page_sentence_keys:
-        item = grouped[sentence_key]
-        modified_form = st.session_state.get(
-            review_widget_key("modified_form", sentence_key),
-            item.get("modified_form") or item.get("original_form") or "",
-        )
-        review_status = st.session_state.get(
-            review_widget_key("review_status", sentence_key),
-            "미완료",
-        )
-        review_updates.append(
-            (
-                modified_form,
-                review_status,
-                modified_form != (item.get("original_form") or ""),
-                review_status,
-                item["data_version"],
-                selected_press,
-                item["doc_id"],
-                item["sentence_id"],
-            )
-        )
-
-    save_review_page(review_updates, authenticated_assignee)
-    fetch_rule_results.clear()
-    st.rerun()
-
 # -----------------------------------------------------------------------------
 # 본문 - 선택한 기사에 포함된 문장 표시
 # -----------------------------------------------------------------------------
@@ -945,7 +1072,18 @@ def render_sentence_layout(idx, sentence_key, item, sentence_id, matches):
     edit_col, rule_col = st.columns([3, 1])
     with edit_col:
         with st.container(border=True, height=410):
-            st.markdown(f"`문장 {idx:02d}: {sentence_id}` `검수 상태: {status}`")
+            if status == "완료":
+                completion_label = (
+                    "수정완료"
+                    if is_modified_form(
+                        get_modified_form(sentence_key, item),
+                        item.get("original_form") or "",
+                    )
+                    else "이상없음"
+                )
+                st.success(f"문장 {idx:02d}: {sentence_id} · {completion_label}")
+            else:
+                st.markdown(f"`문장 {idx:02d}: {sentence_id}` `검수 상태: {status}`")
             st.markdown('<div style="margin-bottom:0.35rem; font-weight:600;">원문</div>', unsafe_allow_html=True)
             st.markdown(
                 f"""<div style="min-height:100px; padding:0.75rem; border-radius:0.5rem; background-color:rgb(240, 242, 246); white-space:pre-wrap; word-break:break-word;">{highlighted_form(item["original_form"], matches)}</div>""",
@@ -957,26 +1095,47 @@ def render_sentence_layout(idx, sentence_key, item, sentence_id, matches):
                 key=modified_key,
                 height=100,
                 label_visibility="collapsed",
+                on_change=save_review_draft,
+                args=(item, authenticated_assignee, selected_review_method),
             )
-            action_col, no_issue_col = st.columns(2)
+            if selected_review_method == BATCH_REVIEW_METHOD:
+                action_col, no_issue_col = st.columns(2, gap="small")
+            else:
+                action_col, no_issue_col = st.columns(2)
             with action_col:
                 st.button(
                     "수정완료",
                     key=review_widget_key("complete_modified", sentence_key),
                     width="stretch",
                     on_click=mark_review_complete_if_modified,
-                    args=(status_key, modified_key, item["original_form"]),
+                    args=(
+                        status_key,
+                        modified_key,
+                        item["original_form"],
+                        item,
+                        authenticated_assignee,
+                        selected_review_method,
+                    ),
                 )
             with no_issue_col:
                 st.button(
                     "이상없음",
                     key=review_widget_key("complete_no_issue", sentence_key),
                     width="stretch",
-                    disabled=st.session_state.get(modified_key, "") != item["original_form"],
+                    disabled=is_modified_form(
+                        get_modified_form(sentence_key, item),
+                        item["original_form"],
+                    ),
                     on_click=mark_no_issue_if_unmodified,
-                    args=(status_key, modified_key, item["original_form"]),
+                    args=(
+                        status_key,
+                        modified_key,
+                        item["original_form"],
+                        item,
+                        authenticated_assignee,
+                        selected_review_method,
+                    ),
                 )
-
     with rule_col:
         with st.container(border=True, height=410):
             st.markdown(
@@ -1030,6 +1189,70 @@ else:
     selected_sentence_keys = docs[selected_doc_key]
     selected_doc_id = selected_doc_key[1]
 
+    if selected_review_method == BATCH_REVIEW_METHOD:
+        # 일괄처리 대상은 현재 페이지가 아니라 선택 언론사의 전체 대상 문장이다.
+        all_batch_rows, _ = fetch_rule_results(
+            selected_press,
+            press_versions[selected_press],
+            selected_rules,
+            max(filtered_article_count, 1),
+            0,
+            selected_review_method,
+            authenticated_assignee,
+        )
+        batch_grouped = group_sentences(all_batch_rows, selected_rules)
+        batch_sentence_keys = list(batch_grouped)
+
+        batch_processing_message = st.session_state.pop("batch_processing_message", None)
+        if batch_processing_message:
+            st.success(batch_processing_message)
+        action_layout_col, _ = st.columns([3, 1])
+        with action_layout_col:
+            with st.container():
+                batch_col, save_col = st.columns(2, gap="small")
+                with batch_col:
+                    st.button(
+                        "일괄처리",
+                        key="batch_processing_button",
+                        width="stretch",
+                        help="선택 언론사의 하이라이트된 <개체명: 태그>만 개체명으로 변환합니다.",
+                        on_click=apply_batch_processing,
+                        args=(batch_sentence_keys, batch_grouped),
+                    )
+                with save_col:
+                    if st.button(
+                        "일괄저장",
+                        key="batch_save_review_button",
+                        width="stretch",
+                        help="선택 언론사의 모든 수정된 일괄처리 문장을 DB에 저장합니다.",
+                    ):
+                        review_updates = []
+                        for sentence_key in batch_sentence_keys:
+                            item = batch_grouped[sentence_key]
+                            modified_form = get_modified_form(sentence_key, item)
+                            review_status = st.session_state.get(
+                                review_widget_key("review_status", sentence_key),
+                                item.get("review_status") or "미완료",
+                            )
+                            review_updates.append(
+                                (
+                                    modified_form,
+                                    review_status,
+                                    is_modified_form(modified_form, item.get("original_form")),
+                                    review_status,
+                                    item["data_version"],
+                                    item["press"],
+                                    item["doc_id"],
+                                    item["sentence_id"],
+                                )
+                            )
+
+                        save_review_page(review_updates, authenticated_assignee)
+                        fetch_rule_results.clear()
+                        st.session_state["batch_processing_message"] = (
+                            "일괄처리 결과를 DB에 저장했습니다."
+                        )
+                        st.rerun()
     # 문장별 검수 영역
     for idx, sentence_key in enumerate(selected_sentence_keys, start=1):
         item = grouped[sentence_key]
