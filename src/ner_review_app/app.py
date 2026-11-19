@@ -4,9 +4,8 @@
 # * 설명: NER 통계 및 검수 Streamlit 진입점
 # ***************************************************
 import sys
-from pathlib import Path
-
 import streamlit as st
+from pathlib import Path
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -14,28 +13,32 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 st.set_page_config(
-    page_title="---", # NER 검수 시스템
-    page_icon="📊",
+    page_title="NER 검수",
+    page_icon="📖",
     layout="wide",
 )
 
-st.text("NER 검수 시스템")
-st.write("왼쪽 페이지 메뉴에서 전체 통계 또는 NER 검수 화면 선택")
-st.caption("전체 통계는 PostgreSQL 집계 결과를 표시하며, NER 검수 화면 구현 예정")
-
+# 첫 화면
+def home():
+    st.info("검수방법")
 
 # 페이지 등록
 pages = [
     st.Page(
-        "pages/1_전체_통계.py",
-        title="전체 통계",
-        icon="📊",
+        home,
+        title="홈",
+        icon="ℹ️",
         default=True,
     ),
     st.Page(
-        "pages/2_NER_검수.py",
+        "pages/1_ner.py",
         title="NER 검수",
-        icon="📝",
+        icon="1️⃣",
+    ),
+    st.Page(
+        "pages/2_dashboard.py",
+        title="검수 현황",
+        icon="2️⃣",
     ),
 ]
 
