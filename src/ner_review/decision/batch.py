@@ -429,7 +429,14 @@ def _write_jsonl_atomic(path: Path, rows: Iterable[dict[str, Any]]) -> int:
                 count += 1
             output.flush()
             os.fsync(output.fileno())
-        os.replace(temp_path, path)
+        for replace_attempt in range(5):
+            try:
+                os.replace(temp_path, path)
+                break
+            except PermissionError:
+                if replace_attempt == 4:
+                    raise
+                time.sleep(0.2 * (replace_attempt + 1))
         return count
     finally:
         if temp_path.exists():
@@ -451,7 +458,14 @@ def _append_jsonl_atomic(path: Path, rows: Iterable[dict[str, Any]]) -> int:
                 count += 1
             output.flush()
             os.fsync(output.fileno())
-        os.replace(temp_path, path)
+        for replace_attempt in range(5):
+            try:
+                os.replace(temp_path, path)
+                break
+            except PermissionError:
+                if replace_attempt == 4:
+                    raise
+                time.sleep(0.2 * (replace_attempt + 1))
         return count
     finally:
         if temp_path.exists():
