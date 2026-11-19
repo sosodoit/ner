@@ -44,4 +44,15 @@
 # 판정 결과
 - TRUE: 해당 룰의 오류 조건이 하나 이상 확인되는 경우
 - FALSE: 해당 룰의 오류 조건이 확인되지 않는 경우
-- 불확실한 경우에도 입력 문맥과 제공된 기준을 최대한 검토한 뒤 가장 가능성 높은 판정을 선택한다. 근거가 불충분하면 confidence를 낮게 표현한다.
+- 불확실한 경우에는 오류를 억지로 추정하지 않는다. 입력 문맥과 제공된 기준을 최대한 검토하되, 오류 확정 근거가 부족하면 FALSE/정상으로 두고 confidence를 낮게 표현한다.
+
+# Decision API 배치 검수 기준
+- 배치 입력은 `ner_human_review.review_method = 'LLM검수'`인 문장만 포함한다.
+- `tagging_error`와 `tagging_merge`는 반드시 독립적으로 판단한다.
+- `tagging_error`는 기존 태그의 적절성을 판단하되 대분류 오류(LLM_E002)를 최우선으로 본다. 특히 LC·OG·AF 경합은 장소인지, 행위·운영 주체인지, 건축물·시설·작품인지 문맥으로 구분한다. 대분류 오류가 없을 때만 오태깅(LLM_E001)과 범위 오류(LLM_E003)를 보조적으로 확인한다.
+- 태그오류 choice는 `wrong_major_tag`, `other_tagging_error`, `normal` 중 하나로 선택한다. 근거가 부족하면 `normal`을 선택한다.
+- `tagging_merge`는 현재 분리된 인접 태깅을 하나의 개체명으로 병합해야 하는지만 판단한다. 기존 태그 하나의 범위 축소·확장은 병합이 아니다.
+- 활성 룰은 오류 후보와 설명을 제공하는 보조 정보다. 룰이 활성화되었다는 사실만으로 오류를 확정하지 않는다.
+- 오류 또는 병합이 FALSE인 경우에도 결과에 `is_error: false` 또는 `needed: false`를 명시한다.
+- Decisions API 응답은 choice/confidence/probabilities 중심이며 텍스트 생성이 아니므로, TRUE인 경우에도 API가 반환하지 않은 대상 태그·오류 유형·수정 제안·병합 범위·설명 문장을 추정하지 않는다. 해당 상세 필드는 null 또는 빈 배열로 둔다.
+- 원문 식별자(`data_version`, `press`, `doc_id`, `sentence_id`)와 모델명·실행 일시는 결과 메타데이터로 보존한다.
