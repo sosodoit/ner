@@ -34,7 +34,11 @@ def _load_martial_law_rows(data_version):
     if not MARTIAL_LAW_RESULTS_DIR.is_dir():
         return rows
 
-    for rule_file in sorted(MARTIAL_LAW_RESULTS_DIR.glob("*.csv")):
+    press = data_version.rsplit("_", 1)[-1]
+    rule_file = MARTIAL_LAW_RESULTS_DIR / f"{press}.csv"
+    rule_files = [rule_file] if rule_file.is_file() else []
+
+    for rule_file in rule_files:
         rule_data = pd.read_csv(rule_file, encoding="utf-8-sig")
         required_columns = {"doc_id", "sentence_id", "form", "EXT_S001"}
         if not required_columns.issubset(rule_data.columns):
@@ -64,7 +68,7 @@ def _load_martial_law_rows(data_version):
     return rows
 
 
-def insert_ner_human_review(data_version=None):
+def insert_ner_human_review(data_version=None, include_martial_law=False):
     version_filter = "AND r.data_version = %s" if data_version else ""
     query = f"""
         INSERT INTO ner_human_review (
@@ -119,7 +123,7 @@ def insert_ner_human_review(data_version=None):
     legacy_rows = []
 
     with get_postgre_connect() as connection:
-        if legacy_versions is None:
+        if include_martial_law and legacy_versions is None:
             version_rows = connection.execute(
                 "SELECT DISTINCT data_version FROM ner_rule_results_3"
             ).fetchall()
@@ -129,8 +133,9 @@ def insert_ner_human_review(data_version=None):
             cursor.execute(query, parameters)
             row_count = cursor.rowcount
 
-            for legacy_version in legacy_versions:
-                legacy_rows.extend(_load_martial_law_rows(legacy_version))
+            if include_martial_law:
+                for legacy_version in legacy_versions:
+                    legacy_rows.extend(_load_martial_law_rows(legacy_version))
 
             if legacy_rows:
                 cursor.executemany(
@@ -155,6 +160,7 @@ def insert_ner_human_review(data_version=None):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--data-version")
+    parser.add_argument("--include-martial-law", action="store_true")
     parser.add_argument("--create-table", action="store_true")
     parser.add_argument("--reset-table", action="store_true")
     args = parser.parse_args()
@@ -168,7 +174,10 @@ def main():
     elif args.create_table:
         create_table()
 
-    insert_ner_human_review(data_version=args.data_version)
+    insert_ner_human_review(
+        data_version=args.data_version,
+        include_martial_law=args.include_martial_law,
+    )
 
 
 if __name__ == "__main__":
