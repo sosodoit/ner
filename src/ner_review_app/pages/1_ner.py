@@ -1230,10 +1230,10 @@ else:
                         for sentence_key in batch_sentence_keys:
                             item = batch_grouped[sentence_key]
                             modified_form = get_modified_form(sentence_key, item)
-                            review_status = st.session_state.get(
-                                review_widget_key("review_status", sentence_key),
-                                item.get("review_status") or "미완료",
-                            )
+                            review_status = "완료"
+                            st.session_state[
+                                review_widget_key("review_status", sentence_key)
+                            ] = review_status
                             review_updates.append(
                                 (
                                     modified_form,
