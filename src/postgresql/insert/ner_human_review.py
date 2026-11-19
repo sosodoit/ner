@@ -6,11 +6,14 @@
 import argparse
 from pathlib import Path
 
+import pandas as pd
+
 from src.config import get_postgre_connect
 
 
 BASE_DIR = Path(__file__).resolve().parents[3]
 SCHEMA_PATH = BASE_DIR / "src/postgresql/schema/ner_human_review.sql"
+MARTIAL_LAW_RESULTS_DIR = BASE_DIR / "data/filter/rule_detect_data/all_pass_ner_tagged_5_martial_law"
 
 
 def create_table():
@@ -24,6 +27,41 @@ def drop_table():
     with get_postgre_connect() as connection:
         connection.execute("DROP TABLE IF EXISTS ner_human_review")
     print("ner_human_review 테이블 삭제 완료")
+
+
+def _load_martial_law_rows(data_version):
+    rows = []
+    if not MARTIAL_LAW_RESULTS_DIR.is_dir():
+        return rows
+
+    for rule_file in sorted(MARTIAL_LAW_RESULTS_DIR.glob("*.csv")):
+        rule_data = pd.read_csv(rule_file, encoding="utf-8-sig")
+        required_columns = {"doc_id", "sentence_id", "form", "EXT_S001"}
+        if not required_columns.issubset(rule_data.columns):
+            continue
+
+        emergency_doc_ids = set(rule_data.loc[rule_data["EXT_S001"].fillna(False), "doc_id"].dropna())
+        emergency_data = rule_data[rule_data["doc_id"].isin(emergency_doc_ids)]
+        emergency_data = emergency_data.drop_duplicates(subset=["doc_id", "sentence_id"])
+
+        rows.extend(
+            (
+                data_version,
+                rule_file.stem,
+                row.doc_id,
+                row.sentence_id,
+                None if pd.isna(row.form) else row.form,
+                None if pd.isna(row.form) else row.form,
+                "휴먼검수",
+                "미완료",
+                False,
+                None,
+                None,
+            )
+            for row in emergency_data.itertuples(index=False)
+        )
+
+    return rows
 
 
 def insert_ner_human_review(data_version=None):
@@ -55,13 +93,21 @@ def insert_ner_human_review(data_version=None):
                     WHERE rule.key LIKE 'EXT_E003_%%'
                       AND rule.key NOT LIKE '%%_PATTERN'
                       AND rule.value = 'true'
+                )
+                AND NOT EXISTS (
+                    SELECT 1
+                    FROM jsonb_each_text(to_jsonb(r)) AS rule(key, value)
+                    WHERE rule.key LIKE 'EXT_%%'
+                      AND rule.key NOT LIKE '%%_PATTERN'
+                      AND rule.key NOT LIKE 'EXT_E003_%%'
+                      AND rule.value = 'true'
                 ) THEN '일괄처리'
                 ELSE 'LLM검수'
             END AS review_method,
             '미완료' AS review_status,
             FALSE AS is_modified,
-            NULL AS assignee,
-            NULL AS updated_at
+            NULL::TEXT AS assignee,
+            NULL::TIMESTAMPTZ AS updated_at
         FROM ner_rule_results_3 r
         WHERE 1 = 1
           {version_filter}
@@ -69,10 +115,38 @@ def insert_ner_human_review(data_version=None):
     """
 
     parameters = (data_version,) if data_version else ()
+    legacy_versions = [data_version] if data_version else None
+    legacy_rows = []
+
     with get_postgre_connect() as connection:
+        if legacy_versions is None:
+            version_rows = connection.execute(
+                "SELECT DISTINCT data_version FROM ner_rule_results_3"
+            ).fetchall()
+            legacy_versions = [row[0] for row in version_rows]
+
         with connection.cursor() as cursor:
             cursor.execute(query, parameters)
             row_count = cursor.rowcount
+
+            for legacy_version in legacy_versions:
+                legacy_rows.extend(_load_martial_law_rows(legacy_version))
+
+            if legacy_rows:
+                cursor.executemany(
+                    """
+                    INSERT INTO ner_human_review (
+                        data_version, press, doc_id, sentence_id, original_form,
+                        modified_form, review_method, review_status, is_modified,
+                        assignee, updated_at
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (data_version, press, doc_id, sentence_id)
+                    DO NOTHING
+                    """,
+                    legacy_rows,
+                )
+                row_count += cursor.rowcount
 
     print(f"ner_human_review 초기 적재 완료: {row_count}건")
     return row_count

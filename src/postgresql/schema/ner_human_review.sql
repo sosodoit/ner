@@ -29,3 +29,26 @@ CREATE INDEX IF NOT EXISTS idx_ner_human_review_status
 
 CREATE INDEX IF NOT EXISTS idx_ner_human_review_doc_sentence
     ON ner_human_review (doc_id, sentence_id);
+
+CREATE OR REPLACE FUNCTION set_ner_human_review_updated_at()
+RETURNS TRIGGER AS $$
+BEGIN
+    IF NEW.review_status = '완료'
+       AND OLD.review_status IS DISTINCT FROM NEW.review_status THEN
+        NEW.updated_at = CURRENT_TIMESTAMP;
+    ELSIF NEW.review_status <> '완료'
+          AND OLD.review_status = '완료'
+          AND NEW.updated_at IS NULL THEN
+        NEW.updated_at = NULL;
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_ner_human_review_updated_at
+    ON ner_human_review;
+
+CREATE TRIGGER trg_ner_human_review_updated_at
+BEFORE UPDATE OF review_status ON ner_human_review
+FOR EACH ROW
+EXECUTE FUNCTION set_ner_human_review_updated_at();
