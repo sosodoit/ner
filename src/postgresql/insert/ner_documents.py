@@ -102,6 +102,7 @@ def insert_ner_documents(input_path, data_version=None):
             %s, %s, %s
         )
         ON CONFLICT (doc_id, sentence_id) DO UPDATE SET
+            data_version = EXCLUDED.data_version,
             document_order = EXCLUDED.document_order,
             paragraph_id = EXCLUDED.paragraph_id,
             corpus_metadata = EXCLUDED.corpus_metadata,

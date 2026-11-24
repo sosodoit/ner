@@ -2,6 +2,7 @@ python-dotenv
 openai
 anthropic
 openpyxl
+python-calamine
 pandas
 ijson
 google-cloud-bigquery
