@@ -17,14 +17,14 @@
 
 # 1. 입력 해석
 
-- `# ARTICLE`: 태그 없는 기사 원문. 지칭 대상 판단용 문맥으로만 사용. `target_span` 복사 원천 아님
-- `# REVIEW_TARGETS`: `[문장 ID] 태깅된 문장` → `sentence_rule_evidence` → `- entity_id | target_span | target_type | rule_evidence` 순. `target_span`은 이 구간에서 그대로 복사. 근거가 없으면 `없음`
+- `# ARTICLE`: 태그 없는 기사 원문. 지칭 대상 판단용 문맥으로만 사용. `target_span` 복사 원천 아님. `review_candidate`가 아닌 문장은 ARTICLE에만 있고 REVIEW_TARGETS에는 없음
+- `# REVIEW_TARGETS`: Response 재검토 대상으로 선정된 문장만 포함. 각 블록은 원문 문장, Decision의 자연어 설명, 기존 태그 순서로 구성. `target_span`은 이 구간에서 그대로 복사. 기존 태깅이 없으면 `기존 태그 없음`으로 해석
 - `[문장 ID]`: 메타데이터. 개체명 후보에서 제외. 입력값 그대로 출력
 - `<개체명: 태그>`: 기존 태깅. 정답으로 전제하지 않음
 - `entity_id`: 검수 대상 개체명 식별자
 - 동일 기사의 다른 문장: 지칭 대상 판단용 문맥. 앞 문장에서 확인된 개체 정보는 뒤 문장까지 유지
 - **검수 창**: 태그 구간 + 태그 바로 앞·뒤에 붙은 문자열(공백 전까지) + 앞뒤 1어절. 모든 판단은 태그 안 문자열이 아닌 검수 창 기준
-- `rule_evidence`(개체명 단위), `sentence_rule_evidence`(문장 단위): 오태깅사전·태깅사전의 적중 규칙·패턴. 오류 후보 신호이며 정답 아님. 사용법은 3절 0단계
+- Decision 설명의 `룰 ID`와 `검출 패턴`은 같은 룰의 실제 연결이다. 해당 패턴은 오태깅사전·태깅사전의 적중 규칙이며 오류 후보 신호이지 정답이 아니다. 사용법은 3절 0단계
 
 # 2. 검수 범위
 
@@ -197,3 +197,17 @@
 # 9. 출력
 
 `reviews` 하나만 반환. 각 결과는 `target_span` → `corrected_span` → 오류 유형 → `reason` → `review_needed` 순으로 작성. JSON 외 출력 금지.
+
+# 10. Decision 후속 검증
+
+- 각 REVIEW_TARGETS 블록의 Decision 설명은 해당 문장이 왜 Response 검토 대상인지, 어떤 룰 ID가 관여했는지, 각 룰 ID가 어떤 실제 pattern을 검출했는지, detected_entities가 무엇을 뜻하는지를 설명함.
+- 기존 태그의 대분류 오류 판단(tagging error)은 기존 태그의 대분류가 잘못되었을 가능성이고, 태그 병합 판단(tagging merge)은 인접한 태그를 하나로 합칠 필요성을 의미함.
+- tagging error와 tagging merge는 서로 독립적으로 검토해야함. 한 판단의 결과가 다른 판단을 대신하거나 제한하지 않음.
+- tagging error와 tagging merge의 probability와 confidence는 참고값이며 확정 판정이 아님. Decision 결과는 Response에서 다시 검증해야 하는 선행 판단임.
+- 룰 ID·패턴·Decision 결과 불일치 시 원문과 기존 태그 기준 재검토. 확인된 오류만 `reviews`에 출력.
+- `REVIEW_TARGETS`의 태그 오류와 태깅 병합 오류에 대한 독립적 재검토. 한쪽의 정상 판정과 무관한 다른 쪽 검토.
+- Decision 결과가 의심 또는 오류 후보인 경우, 근거 확인 시 해당 오류의 `reviews` 기록 필수.
+  - 태그 오류: `error_lv1 = tagging_error`
+  - 태깅 병합 오류: `error_lv1 = span_error`, `error_lv2 = span_tagging_merge`
+- Decision 결과와 재검토 결과가 다르거나 근거가 부족한 경우, 원문 기준 판단 및 `reason`에 차이와 근거 명시.
+- `reason` 내 태그 오류 검토 결과와 태깅 병합 검토 결과의 구분 기록.

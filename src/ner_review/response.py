@@ -137,6 +137,7 @@ def extract_sentences(document):
             "text": sentence["form"],
             "entities": sentence.get("entities", []),
             "sentence_rule_evidence": sentence.get("sentence_rule_evidence", []),
+            "decision": sentence.get("decision"),
         }
         for paragraph in document["paragraph"]
         for sentence in paragraph["sentence"]
@@ -147,6 +148,73 @@ def extract_sentences(document):
 # ***************************************************
 def format_evidence(evidence):
     return json.dumps(evidence, ensure_ascii=False) if evidence else "없음"
+
+
+def format_value(value):
+    if value is None or value == "":
+        return "없음"
+    if isinstance(value, (list, dict)):
+        return json.dumps(value, ensure_ascii=False)
+    return str(value)
+
+
+def format_rule_evidence(candidate_rule_ids, sentence_rule_evidence):
+    evidence_by_rule = {}
+    for evidence in sentence_rule_evidence or []:
+        if not isinstance(evidence, dict):
+            continue
+        rule_id = evidence.get("rule_id")
+        if rule_id:
+            evidence_by_rule.setdefault(rule_id, []).append(evidence.get("pattern") or "없음")
+
+    lines = []
+    for rule_id in candidate_rule_ids or []:
+        patterns = evidence_by_rule.get(rule_id) or ["원자료에 연결된 실제 pattern 정보 없음"]
+        for pattern in patterns:
+            lines.extend([
+                f"- 룰 ID: {rule_id}",
+                f"  검출 패턴: {pattern}",
+            ])
+    return "\n".join(lines) or "- 룰 ID: 없음\n  검출 패턴: 없음"
+
+
+def format_decision_block(item):
+    decision = item.get("decision") or {}
+    candidate_rule_ids = decision.get("candidate_rule_ids") or []
+    rule_evidence = item.get("sentence_rule_evidence") or []
+    tagging_error_result = format_value(decision.get("tagging_error_result"))
+    tagging_error_probability = format_value(decision.get("tagging_error_probability"))
+    tagging_error_confidence = format_value(decision.get("tagging_error_confidence"))
+    tagging_merge_result = format_value(decision.get("tagging_merge_result"))
+    tagging_merge_probability = format_value(decision.get("tagging_merge_probability"))
+    tagging_merge_confidence = format_value(decision.get("tagging_merge_confidence"))
+
+    return "\n".join([
+        "이 문장은 앞선 Decision에서 Response 재검토 대상으로 선정되었습니다.",
+        "룰 기반 검출 결과, 다음 패턴이 후보로 확인되었습니다.",
+        format_rule_evidence(candidate_rule_ids, rule_evidence),
+        "룰 ID와 검출 패턴은 오류 확정 근거가 아니라 검토 후보 신호입니다.",
+        (
+            "Decision에서 감지한 detected_entities는 "
+            f"{format_value(decision.get('detected_entities'))}입니다. "
+            "이는 최종 정답 태그가 아니라, 아래 기존 태그와 원문 문맥을 대조할 검토 범위입니다."
+        ),
+        (
+            "기존 태그의 대분류 오류 가능성 판단(tagging error)은 "
+            f"'{tagging_error_result}'이었습니다 "
+            f"(probability={tagging_error_probability}, confidence={tagging_error_confidence}). "
+            "확률과 confidence는 참고값이며 확정 판정이 아닙니다."
+        ),
+        (
+            "인접 태그의 병합 필요성 판단(tagging merge)은 "
+            f"'{tagging_merge_result}'이었습니다 "
+            f"(probability={tagging_merge_probability}, confidence={tagging_merge_confidence}). "
+            "확률과 confidence는 참고값이며 확정 판정이 아닙니다."
+        ),
+        "태그오류 검토와 태깅병합오류 검토는 서로 독립적으로 수행해야 합니다.",
+        "Decision 결과는 정답이 아니라 Response에서 원문, 기존 태그, 기사 문맥을 기준으로 다시 검증해야 하는 선행 판단입니다.",
+    ])
+
 
 # ***************************************************
 # * 기사별 검수 입력 구성
@@ -160,9 +228,14 @@ def prepare_document(document, system_prompt=None):
         for item in sentences
     )
 
-    # 문장별 기존 태깅과 사전 근거 (target_span 복사 원천)
+    # review_candidate 문장만 실제 검수 대상으로 전달하고, 나머지는 ARTICLE 문맥으로만 사용
     review_blocks = []
-    for item in sentences:
+    review_targets = [
+        item
+        for item in sentences
+        if (item.get("decision") or {}).get("review_candidate") is True
+    ]
+    for item in review_targets:
         entity_lines = [
             f"- entity_id: {entity['entity_id']} | "
             f"target_span: {entity['target_span']} | "
@@ -173,7 +246,8 @@ def prepare_document(document, system_prompt=None):
 
         review_blocks.append(
             f"[{item['sentence_id']}] {item['text']}\n"
-            f"sentence_rule_evidence: {format_evidence(item.get('sentence_rule_evidence'))}\n"
+            + format_decision_block(item)
+            + "\n기존 태그:\n"
             + "\n".join(entity_lines)
         )
 

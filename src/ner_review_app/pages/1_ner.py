@@ -300,7 +300,11 @@ def mark_review_complete_if_modified(
     st.session_state[status_key] = "완료"
     # 일괄처리의 최초 결과는 일괄저장으로 반영하되, 이미 저장된 문장의
     # 재수정은 개별 완료 버튼으로 즉시 DB에 반영한다.
-    should_save = review_method != BATCH_REVIEW_METHOD or was_completed
+    should_save = (
+        item.get("review_storage") == "add"
+        or review_method != BATCH_REVIEW_METHOD
+        or was_completed
+    )
     if was_completed:
         st.session_state[review_widget_key("revised", modified_key)] = True
     if item and assignee and should_save:
@@ -324,7 +328,12 @@ def mark_no_issue_if_unmodified(
     st.session_state[status_key] = "완료"
     st.session_state[modified_key] = original_form
     st.session_state[value_key] = original_form
-    if item and assignee and review_method != BATCH_REVIEW_METHOD:
+    if (
+        item
+        and assignee
+        and review_method != BATCH_REVIEW_METHOD
+        and item.get("review_storage") != "add"
+    ):
         save_review_item(item, assignee, original_form, "완료")
     st.toast("이상없음으로 저장되었습니다.")
 
@@ -353,6 +362,10 @@ def save_review_page(review_updates, assignee):
 
 
 def save_review_item(item, assignee, modified_form, review_status):
+    if item.get("review_storage") == "add":
+        save_review_add_item(item, assignee, modified_form, review_status)
+        return
+
     save_review_page(
         [
             (
@@ -372,6 +385,43 @@ def save_review_item(item, assignee, modified_form, review_status):
     fetch_article_sentences.clear()
 
 
+def save_review_add_item(item, assignee, modified_form, review_status):
+    query = """
+        INSERT INTO public.ner_human_review_add (
+            data_version, press, doc_id, sentence_id, original_form,
+            modified_form, review_method, review_status, is_modified,
+            assignee, updated_at
+        )
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                CASE WHEN %s = '완료' THEN CURRENT_TIMESTAMP ELSE NULL END)
+        ON CONFLICT (data_version, press, doc_id, sentence_id)
+        DO UPDATE SET
+            modified_form = EXCLUDED.modified_form,
+            review_method = EXCLUDED.review_method,
+            review_status = EXCLUDED.review_status,
+            is_modified = EXCLUDED.is_modified,
+            updated_at = EXCLUDED.updated_at
+    """
+    with get_postgre_connect() as conn:
+        conn.execute(
+            query,
+            (
+                item["data_version"],
+                item["press"],
+                item["doc_id"],
+                item["sentence_id"],
+                item.get("original_form") or "",
+                modified_form,
+                item.get("review_method") or "LLM검수",
+                review_status,
+                is_modified_form(modified_form, item.get("original_form")),
+                assignee,
+                review_status,
+            ),
+        )
+    fetch_article_sentences.clear()
+
+
 def save_review_draft(item, assignee, review_method=None):
     sentence_key = (item["data_version"], item["doc_id"], item["sentence_id"])
     modified_key = review_widget_key("modified_form", sentence_key)
@@ -382,6 +432,8 @@ def save_review_draft(item, assignee, review_method=None):
     review_status = st.session_state.get(status_key, item.get("review_status") or "미완료")
     if review_method == BATCH_REVIEW_METHOD:
         # 일괄처리 모드는 완료 버튼과 일괄 저장 버튼이 상태 변경을 담당한다.
+        return
+    if item.get("review_storage") == "add":
         return
     if is_modified_form(modified_form, item.get("original_form")):
         review_status = "미완료"
@@ -550,7 +602,14 @@ def fetch_rule_results(
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
-def fetch_article_sentences(data_version, doc_id, press, assignee, selected_rules):
+def fetch_article_sentences(
+    data_version,
+    doc_id,
+    press,
+    assignee,
+    selected_review_method,
+    selected_rules,
+):
     """선택한 기사에 한정해 ner_documents의 전체 문장을 조회한다."""
     selected_rules = tuple(selected_rules)
     rule_condition = " OR ".join(f'r."{rule}" IS TRUE' for rule in selected_rules)
@@ -578,13 +637,16 @@ def fetch_article_sentences(data_version, doc_id, press, assignee, selected_rule
     if not selected_rule_columns:
         selected_rule_columns = "NULL AS rule_result_placeholder"
 
+    entity_order = ", r.entity_id" if selected_rules else ""
+
     query = f"""
         WITH target AS (
             SELECT
                 %s::TEXT AS data_version,
                 %s::TEXT AS press,
                 %s::TEXT AS assignee,
-                %s::TEXT AS doc_id
+                %s::TEXT AS doc_id,
+                %s::TEXT AS selected_review_method
         )
         SELECT
             target.data_version AS data_version,
@@ -594,9 +656,23 @@ def fetch_article_sentences(data_version, doc_id, press, assignee, selected_rule
             n.form AS document_original_form,
             COALESCE(h.original_form, n.form) AS original_form,
             COALESCE(h.modified_form, n.form) AS modified_form,
-            h.review_method AS review_method,
-            h.review_status AS review_status,
-            h.is_modified AS is_modified,
+            COALESCE(
+                h.review_method,
+                a.review_method,
+                target.selected_review_method,
+                (
+                    SELECT MIN(h0.review_method)
+                    FROM public.ner_human_review AS h0
+                    WHERE h0.data_version = target.data_version
+                      AND h0.press = target.press
+                      AND h0.doc_id = n.doc_id
+                      AND h0.assignee = target.assignee
+                )
+            ) AS review_method,
+            COALESCE(h.review_status, a.review_status) AS review_status,
+            COALESCE(h.is_modified, a.is_modified, FALSE) AS is_modified,
+            CASE WHEN h.sentence_id IS NULL THEN 'add' ELSE 'human' END AS review_storage,
+            CASE WHEN h.sentence_id IS NULL THEN 'N' ELSE 'Y' END AS review_target,
             d.detected_entities,
             d.candidate_rule_ids,
             d.tagging_error_result,
@@ -612,20 +688,24 @@ def fetch_article_sentences(data_version, doc_id, press, assignee, selected_rule
          AND h.doc_id = n.doc_id
          AND h.sentence_id = n.sentence_id
          AND h.assignee = target.assignee
+        LEFT JOIN public.ner_human_review_add AS a
+          ON a.data_version = target.data_version
+         AND a.press = target.press
+         AND a.doc_id = n.doc_id
+         AND a.sentence_id = n.sentence_id
         LEFT JOIN public.ner_decision_results AS d
           ON d.data_version = target.data_version
          AND d.press = target.press
          AND d.doc_id = n.doc_id
          AND d.sentence_id = n.sentence_id
         {rule_join}
-        ORDER BY n.sentence_id, n.sentence_order, n.paragraph_order,
-                 {"r.entity_id" if selected_rules else "NULL"}
+        ORDER BY n.sentence_id{entity_order}
     """
 
     with get_postgre_connect() as conn:
         rows = conn.execute(
             query,
-            (data_version, press, assignee, doc_id),
+            (data_version, press, assignee, doc_id, selected_review_method),
         ).fetchall()
     return rows
 
@@ -662,6 +742,8 @@ def group_sentences(rows, selected_rules):
                 ),
                 "review_method": row.get("review_method"),
                 "review_status": row.get("review_status"),
+                "review_storage": row.get("review_storage") or "human",
+                "review_target": row.get("review_target") or "Y",
                 "is_modified": row.get("is_modified", False),
                 "tags": set(),
                 "matches": set(),
@@ -1004,7 +1086,7 @@ selected_types = multi_select_filter(
     "오류유형",
     RULE_TYPES,
     RULE_TYPES,
-    lambda value: f"{RULE_TYPE_NAMES.get(value, value)} ({value})",
+    lambda value: f"{RULE_TYPE_NAMES.get(value, value)}",
     "selected_type",
 )
 
@@ -1027,7 +1109,7 @@ selected_rules = multi_select_filter(
     "세부유형",
     available_rules,
     available_rules,
-    lambda value: f"{RULE_NAMES.get(value, value)} ({value})",
+    lambda value: f"{RULE_NAMES.get(value, value)}",
     "selected_rule",
 )
 
@@ -1333,6 +1415,7 @@ def render_sentence_layout(idx, sentence_key, item, sentence_id, matches, decisi
     status_key = review_widget_key("review_status", sentence_key)
     modified_key = review_widget_key("modified_form", sentence_key)
     status = st.session_state.get(status_key, item.get("review_status") or "상태 없음")
+    review_target = item.get("review_target") or "Y"
 
     edit_col, rule_col = st.columns([3, 1])
     with edit_col:
@@ -1350,9 +1433,15 @@ def render_sentence_layout(idx, sentence_key, item, sentence_id, matches, decisi
                     )
                     else "이상없음"
                 )
-                st.success(f"문장 {idx:02d}: {sentence_id} · {completion_label}")
+                st.success(
+                    f"문장 {idx:02d}: {sentence_id} · {completion_label} · "
+                    f"검수 대상: {review_target}"
+                )
             else:
-                st.markdown(f"`문장 {idx:02d}: {sentence_id}` `검수 상태: {status}`")
+                st.markdown(
+                    f"`문장 {idx:02d}: {sentence_id}` "
+                    f"`검수 상태: {status}` `검수 대상: {review_target}`"
+                )
             st.markdown('<div style="margin-bottom:0.35rem; font-weight:600;">원문</div>', unsafe_allow_html=True)
             st.markdown(
                 f"""<div style="min-height:100px; padding:0.75rem; border-radius:0.5rem; background-color:rgb(240, 242, 246); white-space:pre-wrap; word-break:break-word;">{highlighted_form_with_decision(item["original_form"], matches, decision_highlights)}</div>""",
@@ -1483,6 +1572,7 @@ else:
             selected_doc_key[1],
             selected_press,
             authenticated_assignee,
+            selected_review_method,
             tuple(selected_rules),
         )
         display_grouped = group_sentences(full_article_rows, selected_rules)
@@ -1535,7 +1625,7 @@ else:
                         "일괄처리",
                         key="batch_processing_button",
                         width="stretch",
-                        help="선택 언론사의 하이라이트된 <개체명: 태그>만 개체명으로 변환합니다.",
+                        help="선택 언론사의 하이라이트된 <X: Y>를 X 형태로 변환합니다.",
                         on_click=apply_batch_processing,
                         args=(batch_sentence_keys, batch_grouped),
                     )
@@ -1544,7 +1634,7 @@ else:
                         "일괄저장",
                         key="batch_save_review_button",
                         width="stretch",
-                        help="선택 언론사의 모든 수정된 일괄처리 문장을 DB에 저장합니다.",
+                        help="선택 언론사의 모든 수정된 일괄처리 문장을 저장합니다.",
                     ):
                         review_updates = []
                         for sentence_key in batch_sentence_keys:
