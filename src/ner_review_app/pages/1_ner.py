@@ -369,6 +369,7 @@ def save_review_item(item, assignee, modified_form, review_status):
         assignee,
     )
     fetch_rule_results.clear()
+    fetch_article_sentences.clear()
 
 
 def save_review_draft(item, assignee, review_method=None):
@@ -546,6 +547,87 @@ def fetch_rule_results(
         ).fetchall()
     filtered_article_count = int(rows[0]["filtered_article_count"]) if rows else 0
     return rows, filtered_article_count
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def fetch_article_sentences(data_version, doc_id, press, assignee, selected_rules):
+    """선택한 기사에 한정해 ner_documents의 전체 문장을 조회한다."""
+    selected_rules = tuple(selected_rules)
+    rule_condition = " OR ".join(f'r."{rule}" IS TRUE' for rule in selected_rules)
+    rule_join = ""
+    rule_columns = ["NULL AS entity_id", "NULL AS entity_tagging"]
+    if selected_rules:
+        rule_join = f"""
+        LEFT JOIN public.ner_rule_results_3 AS r
+          ON r.data_version = target.data_version
+         AND r.doc_id = n.doc_id
+         AND r.sentence_id = n.sentence_id
+         AND ({rule_condition})
+        """
+        rule_columns = ["r.entity_id", "r.entity_tagging"]
+
+    selected_rule_columns = ",\n            ".join(
+        column
+        for rule in selected_rules
+        for column in (
+            [f'r."{rule}"']
+            if rule == "EXT_S003"
+            else [f'r."{rule}"', f'r."{rule}_PATTERN"']
+        )
+    )
+    if not selected_rule_columns:
+        selected_rule_columns = "NULL AS rule_result_placeholder"
+
+    query = f"""
+        WITH target AS (
+            SELECT
+                %s::TEXT AS data_version,
+                %s::TEXT AS press,
+                %s::TEXT AS assignee,
+                %s::TEXT AS doc_id
+        )
+        SELECT
+            target.data_version AS data_version,
+            target.press AS press,
+            n.doc_id AS doc_id,
+            n.sentence_id AS sentence_id,
+            n.form AS document_original_form,
+            COALESCE(h.original_form, n.form) AS original_form,
+            COALESCE(h.modified_form, n.form) AS modified_form,
+            h.review_method AS review_method,
+            h.review_status AS review_status,
+            h.is_modified AS is_modified,
+            d.detected_entities,
+            d.candidate_rule_ids,
+            d.tagging_error_result,
+            d.tagging_merge_result,
+            {", ".join(rule_columns)},
+            {selected_rule_columns}
+        FROM target
+        JOIN public.ner_documents AS n
+          ON n.doc_id = target.doc_id
+        LEFT JOIN public.ner_human_review AS h
+          ON h.data_version = target.data_version
+         AND h.press = target.press
+         AND h.doc_id = n.doc_id
+         AND h.sentence_id = n.sentence_id
+         AND h.assignee = target.assignee
+        LEFT JOIN public.ner_decision_results AS d
+          ON d.data_version = target.data_version
+         AND d.press = target.press
+         AND d.doc_id = n.doc_id
+         AND d.sentence_id = n.sentence_id
+        {rule_join}
+        ORDER BY n.sentence_id, n.sentence_order, n.paragraph_order,
+                 {"r.entity_id" if selected_rules else "NULL"}
+    """
+
+    with get_postgre_connect() as conn:
+        rows = conn.execute(
+            query,
+            (data_version, press, assignee, doc_id),
+        ).fetchall()
+    return rows
 
 
 def group_sentences(rows, selected_rules):
@@ -766,6 +848,19 @@ def document_sort_key(document_key):
     if suffix.isdigit():
         return data_version, 0, int(suffix), doc_id
     return data_version, 1, suffix, doc_id
+
+
+def sentence_sort_key(sentence_key):
+    """문장 ID를 점(.)으로 나눈 숫자 구간 기준으로 정렬한다."""
+    data_version, doc_id, sentence_id = sentence_key
+    sentence_id = str(sentence_id)
+    parts = []
+    for part in sentence_id.split("."):
+        if part.isdigit():
+            parts.append((0, int(part)))
+        else:
+            parts.append((1, part))
+    return data_version, doc_id, tuple(parts), sentence_id
 
 # -----------------------------------------------------------------------------
 # 데이터 조회
@@ -1368,10 +1463,52 @@ if selected_doc_key is None:
     st.info("좌측 사이드바에서 기사를 선택하면 검수 대상 문장이 표시됩니다.")
 
 else:
-    selected_sentence_keys = docs[selected_doc_key]
+    if st.session_state.get("full_article_doc_key") != selected_doc_key:
+        st.session_state["full_article_doc_key"] = selected_doc_key
+        st.session_state["show_full_article"] = False
+
+    show_full_article = st.session_state.get("show_full_article", False)
+    if st.button(
+        "검수 대상만 보기" if show_full_article else "전체 기사보기",
+        key="toggle_full_article_button",
+        width="stretch",
+        help="선택한 기사의 모든 문장을 표시합니다.",
+    ):
+        st.session_state["show_full_article"] = not show_full_article
+        st.rerun()
+
+    if show_full_article:
+        full_article_rows = fetch_article_sentences(
+            selected_doc_key[0],
+            selected_doc_key[1],
+            selected_press,
+            authenticated_assignee,
+            tuple(selected_rules),
+        )
+        display_grouped = group_sentences(full_article_rows, selected_rules)
+        selected_sentence_keys = sorted(
+            display_grouped,
+            key=sentence_sort_key,
+        )
+        st.caption(f"전체 기사 문장 {len(selected_sentence_keys):,}개")
+    else:
+        display_grouped = grouped
+        selected_sentence_keys = docs[selected_doc_key]
+
+    for sentence_key in selected_sentence_keys:
+        item = display_grouped[sentence_key]
+        status_key = review_widget_key("review_status", sentence_key)
+        modified_key = review_widget_key("modified_form", sentence_key)
+        if status_key not in st.session_state:
+            st.session_state[status_key] = item.get("review_status") or "미완료"
+        value_key = review_value_key(sentence_key)
+        if value_key not in st.session_state:
+            st.session_state[value_key] = item.get("modified_form") or item.get("original_form") or ""
+        st.session_state[modified_key] = st.session_state[value_key]
+
     selected_doc_id = selected_doc_key[1]
 
-    if selected_review_method == BATCH_REVIEW_METHOD:
+    if selected_review_method == BATCH_REVIEW_METHOD and not show_full_article:
         # 일괄처리 대상은 현재 페이지가 아니라 선택 언론사의 전체 대상 문장이다.
         all_batch_rows, _ = fetch_rule_results(
             selected_press,
@@ -1432,13 +1569,14 @@ else:
 
                         save_review_page(review_updates, authenticated_assignee)
                         fetch_rule_results.clear()
+                        fetch_article_sentences.clear()
                         st.session_state["batch_processing_message"] = (
                             "일괄처리 결과를 DB에 저장했습니다."
                         )
                         st.rerun()
     # 문장별 검수 영역
     for idx, sentence_key in enumerate(selected_sentence_keys, start=1):
-        item = grouped[sentence_key]
+        item = display_grouped[sentence_key]
         sentence_id = item["sentence_id"]
         matches = sorted(
             item["matches"],
