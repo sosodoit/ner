@@ -60,66 +60,68 @@ RULES_BY_TYPE = {
         "EXT_E006_EV_002",
     ],
 }
+
 # 오류유형 화면 표시 명칭
 RULE_TYPE_NAMES = {
-    "EXT_S003": "DT 개체명 연속 출현",
-    "EXT_E003": "태그별 오태깅 의심 개체명",
-    "EXT_E004": "DT 개체명의 범위 표현 오류",
-    "EXT_E005": "EV 개체명의 숫자 표현 오류",
-    "EXT_E006": "EV 개체명의 범위 표현 오류",
+    "EXT_S003": "[DT] 태깅병합",
+    "EXT_E003": "오태깅",
+    "EXT_E004": "[DT] 범위오류",
+    "EXT_E005": "[EV] 태깅분리",
+    "EXT_E006": "[EV] 범위오류",
 }
 
 # 세부유형 화면 표시 명칭
+# 추후 하위 태그 내용 합쳐서 상위 태그 내용으로만 보이도록
 RULE_NAMES = {
     # EXT_E003
-    "EXT_E003_AF_001": "법률명",
-    "EXT_E003_AF_002": "AI 모델명",
-    "EXT_E003_AF_003": "SNS·커뮤니티 앱명",
-    "EXT_E003_AF_004": "소프트웨어명",
-    "EXT_E003_AF_005": "상품권·플랫폼명",
-    "EXT_E003_AF_007": "단독 태깅",
-    "EXT_E003_AF_008": "금융 상품",
-    "EXT_E003_AF_009": "의류",
-    "EXT_E003_AF_010": "전자기기",
-    "EXT_E003_DT_001": "수량·횟수 표현",
-    "EXT_E003_DT_002": "시간·수량 표현",
-    "EXT_E003_DT_003": "반복 기간",
-    "EXT_E003_EV_001": "사업·과정명",
-    "EXT_E003_EV_002": "칙령·혁명",
-    "EXT_E003_LC_001": "국적 표현 (접미형)",
-    "EXT_E003_LC_002": "국적 표현 (내부 결합형)",
-    "EXT_E003_LC_003": "단독 태깅",
-    "EXT_E003_LC_004": "꽃밭 포함",
-    "EXT_E003_LC_005": "고개·바위",
-    "EXT_E003_LC_007": "지역명",
-    "EXT_E003_OG_001": "직책 표현",
-    "EXT_E003_OG_002": "단독 태깅",
-    "EXT_E003_OG_003": "진료과명",
-    "EXT_E003_OG_004": "종교명",
-    "EXT_E003_PS_001": "직책형 인물 표현",
-    "EXT_E003_PS_002": "익명 인물 표현",
-    "EXT_E003_PS_003": "영어 이름 앞 호칭",
-    "EXT_E003_PS_004": "유아어",
+    "EXT_E003_AF_001": "[AF] 법률명",
+    "EXT_E003_AF_002": "[AF] 모델명",
+    "EXT_E003_AF_003": "[AF] 앱명",
+    "EXT_E003_AF_004": "[AF] 소프트웨어명",
+    "EXT_E003_AF_005": "[AF] 상품권·플랫폼명",
+    "EXT_E003_AF_007": "[AF] 단독태깅제외명사",
+    "EXT_E003_AF_008": "[AF] 금융상품",
+    "EXT_E003_AF_009": "[AF] 의류보통명사",
+    "EXT_E003_AF_010": "[AF] 전자기기",
+    "EXT_E003_DT_001": "[DT] 수량·횟수표현",
+    "EXT_E003_DT_002": "[DT] 시간·수량표현",
+    "EXT_E003_DT_003": "[DT] 반복기간",
+    "EXT_E003_EV_001": "[EV] 사업·과정명",
+    "EXT_E003_EV_002": "[EV] 칙령",
+    "EXT_E003_LC_001": "[LC] 국적표현(접미형)",
+    "EXT_E003_LC_002": "[LC] 국적표현(내부결합형)",
+    "EXT_E003_LC_003": "[LC] 단독태깅제외명사",
+    "EXT_E003_LC_004": "[LC] 꽃밭",
+    "EXT_E003_LC_005": "[LC] 고개·바위",
+    "EXT_E003_LC_007": "[LC] 지역명",
+    "EXT_E003_OG_001": "[OG] 직책표현",
+    "EXT_E003_OG_002": "[OG] 기타명사",
+    "EXT_E003_OG_003": "[OG] 진료과명",
+    "EXT_E003_OG_004": "[OG] 종교명",
+    "EXT_E003_PS_001": "[PS] 직책형인물표현",
+    "EXT_E003_PS_002": "[PS] 익명표현",
+    "EXT_E003_PS_003": "[PS] 영어호칭",
+    "EXT_E003_PS_004": "[PS] 유아어",
 
     # EXT_E004
-    "EXT_E004_DT_001": "선행 범위 표현",
-    "EXT_E004_DT_002": "후행 근사 표현",
-    "EXT_E004_DT_003": "후행 시점 표현",
-    "EXT_E004_DT_004": "기간 범위 표현",
-    "EXT_E004_DT_005": "후행 내부 범위 표현",
-    "EXT_E004_DT_006": "시대·시기 결합 표현",
-    "EXT_E004_DT_007": "일수·월수 단위 결합 표현",
+    "EXT_E004_DT_001": "[DT] 선행표현",
+    "EXT_E004_DT_002": "[DT] 후행표현(근사)",
+    "EXT_E004_DT_003": "[DT] 후행표현(시점)",
+    "EXT_E004_DT_004": "[DT] 기간범위",
+    "EXT_E004_DT_005": "[DT] 후행표현(이내)",
+    "EXT_E004_DT_006": "[DT] 시대·시기표현",
+    "EXT_E004_DT_007": "[DT] 기타표현",
 
     # EXT_E005
-    "EXT_E005_EV_001": "연도 포함",
-    "EXT_E005_EV_002": "연도·시즌·월 접미 표현",
-    "EXT_E005_EV_003": "연도 범위",
-    "EXT_E005_EV_004": "기수 표현",
-    "EXT_E005_EV_005": "날짜형 숫자 표현",
+    "EXT_E005_EV_001": "[EV] 연도포함",
+    "EXT_E005_EV_002": "[EV] 연도포함(접미)",
+    "EXT_E005_EV_003": "[EV] 연도포함(범위)",
+    "EXT_E005_EV_004": "[EV] 횟수포함",
+    "EXT_E005_EV_005": "[EV] 날짜포함",
 
     # EXT_E006
-    "EXT_E006_EV_001": "이벤트 이후 시점 표현",
-    "EXT_E006_EV_002": "라운드·회차·경기 표현",
+    "EXT_E006_EV_001": "[EV] 시점포함",
+    "EXT_E006_EV_002": "[EV] 라운드·회차·경기",
 }
 
 RULE_TYPES = list(RULES_BY_TYPE)
@@ -341,6 +343,11 @@ def save_review_page(review_updates, assignee):
           AND doc_id = %s
           AND sentence_id = %s
           AND assignee = %s
+    return (
+        '<div style="white-space:pre-wrap; line-height:1.9; '
+        f'font-size:16px'>{"".join(rendered)}</div>'
+    )
+
     """
 
     with get_postgre_connect() as conn:
@@ -503,6 +510,10 @@ def fetch_rule_results(
             t.filtered_article_count AS filtered_article_count,
             r.entity_id,
             r.entity_tagging,
+            d.detected_entities,
+            d.candidate_rule_ids,
+            d.tagging_error_result,
+            d.tagging_merge_result,
             {select_columns}
         FROM target_docs AS t
         JOIN public.ner_human_review AS h
@@ -518,6 +529,11 @@ def fetch_rule_results(
          AND r.doc_id = h.doc_id
          AND r.sentence_id = h.sentence_id
          {f'AND ({condition})' if selected_rules else ''}
+        LEFT JOIN public.ner_decision_results AS d
+          ON d.data_version = h.data_version
+         AND d.press = h.press
+         AND d.doc_id = h.doc_id
+         AND d.sentence_id = h.sentence_id
         ORDER BY h.data_version, h.doc_id, h.sentence_id, r.entity_id
     """
 
@@ -570,6 +586,12 @@ def group_sentences(rows, selected_rules):
                 "is_modified": row.get("is_modified", False),
                 "tags": set(),
                 "matches": set(),
+                "decision": {
+                    "detected_entities": row.get("detected_entities"),
+                    "candidate_rule_ids": row.get("candidate_rule_ids"),
+                    "tagging_error_result": row.get("tagging_error_result"),
+                    "tagging_merge_result": row.get("tagging_merge_result"),
+                },
             },
         )
 
@@ -583,6 +605,122 @@ def group_sentences(rows, selected_rules):
 
     return grouped
 
+
+def has_decision_result(decision):
+    return any(value not in (None, "", [], {}, ()) for value in decision.values())
+
+
+SUSPICION_COLORS = {
+    "약한 의심": "#94A3B8",
+    "중간 의심": "#F59E0B",
+    "강한 의심": "#EF4444",
+}
+SUSPICION_PRIORITY = {"약한 의심": 1, "중간 의심": 2, "강한 의심": 3}
+SUSPICION_LABELS = {
+    "약한 의심": "낮음",
+    "중간 의심": "중간",
+    "강한 의심": "높음",
+}
+
+
+def normalize_suspicion_level(value):
+    value = str(value).strip()
+    return value if value in SUSPICION_COLORS else None
+
+
+def get_decision_highlights(decision):
+    entities = [
+        entity.strip()
+        for entity in str(decision.get("detected_entities") or "").split(",")
+        if entity.strip()
+    ]
+    levels = [
+        level
+        for level in (
+            decision.get("tagging_error_result"),
+            decision.get("tagging_merge_result"),
+        )
+        if normalize_suspicion_level(level)
+    ]
+    levels = [normalize_suspicion_level(level) for level in levels]
+    level = max(levels, key=SUSPICION_PRIORITY.get) if levels else None
+    return [(entity, level) for entity in entities if level]
+
+
+def highlighted_form_with_decision(form, matches, decision_highlights):
+    """Render rule highlights and decision suspicion underlines together."""
+    form = form or ""
+    if not decision_highlights:
+        return highlighted_form(form, matches)
+
+    spans = []
+
+    for entity, level in decision_highlights:
+        spans.extend(
+            (match.start(), match.end(), "decision", level)
+            for match in re.finditer(re.escape(entity), form)
+        )
+
+    rule_patterns = {
+        pattern_part.strip()
+        for _, pattern in matches
+        if pattern != "패턴 없음"
+        for pattern_part in re.split(r",\s*|\r?\n", str(pattern))
+        if pattern_part.strip()
+    }
+    for pattern in rule_patterns:
+        spans.extend(
+            (match.start(), match.end(), "rule", None)
+            for match in re.finditer(re.escape(pattern), form)
+        )
+
+    if not spans:
+        return (
+            '<div style="white-space:pre-wrap; line-height:1.9; '
+            f'font-size:16px">{html.escape(form)}</div>'
+        )
+
+    boundaries = {0, len(form)}
+    boundaries.update(start for start, _, _, _ in spans)
+    boundaries.update(end for _, end, _, _ in spans)
+    boundaries = sorted(boundaries)
+
+    rendered = []
+    for start, end in zip(boundaries, boundaries[1:]):
+        active_spans = [
+            span for span in spans if span[0] < end and start < span[1]
+        ]
+        text = html.escape(form[start:end])
+        if not active_spans:
+            rendered.append(text)
+            continue
+
+        decision_spans = [span for span in active_spans if span[2] == "decision"]
+        rule_spans = [span for span in active_spans if span[2] == "rule"]
+        styles = []
+        if rule_spans:
+            styles.extend(
+                ["background:#ffe08a", "padding:2px 3px", "border-radius:4px"]
+            )
+        if decision_spans:
+            level = max(
+                (span[3] for span in decision_spans),
+                key=SUSPICION_PRIORITY.get,
+            )
+            styles.extend(
+                [
+                    "text-decoration-line:underline",
+                    f"text-decoration-color:{SUSPICION_COLORS[level]}",
+                    "text-decoration-thickness:3px",
+                    "text-underline-offset:3px",
+                ]
+            )
+        rendered.append(f'<span style="{"; ".join(styles)}">{text}</span>')
+
+    return (
+        '<div style="white-space:pre-wrap; line-height:1.9; '
+        f'font-size:16px">{"".join(rendered)}</div>'
+    )
 
 def highlighted_form(form, matches):
     patterns = {
@@ -810,15 +948,15 @@ with ner_header_placeholder.container(border=False):
     ] if selected_review_method_display != "계엄기사" else []
     selected_type_display = (
         "  ".join(
-            f'''{html.escape(rule_name)} <span style="
+            f'''<span style="
                 color:#64748b;
                 background-color:#f1f5f9;
                 border-radius:4px;
                 padding:2px 6px;
                 font-size:11px;
                 font-weight:400;
-            ">{html.escape(rule)}</span>'''
-            for rule_name, rule in zip(selected_type_names, selected_types)
+            ">{html.escape(rule_name)}</span>'''
+            for rule_name, _ in zip(selected_type_names, selected_types)
         )
         if selected_type_names
         else "없음"
@@ -1101,7 +1239,7 @@ with next_col:
 # -----------------------------------------------------------------------------
 # 본문 - 선택한 기사에 포함된 문장 표시
 # -----------------------------------------------------------------------------
-def render_sentence_layout(idx, sentence_key, item, sentence_id, matches):
+def render_sentence_layout(idx, sentence_key, item, sentence_id, matches, decision_highlights):
     status_key = review_widget_key("review_status", sentence_key)
     modified_key = review_widget_key("modified_form", sentence_key)
     status = st.session_state.get(status_key, item.get("review_status") or "상태 없음")
@@ -1127,7 +1265,7 @@ def render_sentence_layout(idx, sentence_key, item, sentence_id, matches):
                 st.markdown(f"`문장 {idx:02d}: {sentence_id}` `검수 상태: {status}`")
             st.markdown('<div style="margin-bottom:0.35rem; font-weight:600;">원문</div>', unsafe_allow_html=True)
             st.markdown(
-                f"""<div style="min-height:100px; padding:0.75rem; border-radius:0.5rem; background-color:rgb(240, 242, 246); white-space:pre-wrap; word-break:break-word;">{highlighted_form(item["original_form"], matches)}</div>""",
+                f"""<div style="min-height:100px; padding:0.75rem; border-radius:0.5rem; background-color:rgb(240, 242, 246); white-space:pre-wrap; word-break:break-word;">{highlighted_form_with_decision(item["original_form"], matches, decision_highlights)}</div>""",
                 unsafe_allow_html=True,
             )
             st.markdown('<div style="margin-top:0.9rem; margin-bottom:0.35rem; font-weight:600;">수정문</div>', unsafe_allow_html=True)
@@ -1179,14 +1317,15 @@ def render_sentence_layout(idx, sentence_key, item, sentence_id, matches):
                 )
     with rule_col:
         with st.container(border=True, height="stretch"):
+            # 검출 정보 
             st.markdown(
                 """
-                <div style="font-size:14px; font-weight:600; margin-bottom:4px;">
+                <div style="padding-top:10px; font-size:14px; font-weight:600;">
                     의심 되는 오류 유형
                 </div>
                 """,
                 unsafe_allow_html=True,
-            )
+            ) 
 
             if matches:
                 for rule, _ in matches:
@@ -1194,27 +1333,8 @@ def render_sentence_layout(idx, sentence_key, item, sentence_id, matches):
 
                     st.markdown(
                         f"""
-                        <div style="
-                            display:flex;
-                            align-items:center;
-                            gap:7px;
-                            padding:5px 0;
-                            font-size:13px;
-                        ">
-                            <span style="color:#64748b;">•</span>
-                            <span style="color:#334155; font-weight:600;">
-                                {rule_name}
-                            </span>
-                            <span style="
-                                color:#64748b;
-                                background-color:#f1f5f9;
-                                border-radius:4px;
-                                padding:2px 6px;
-                                font-size:11px;
-                                font-weight:400;
-                            ">
-                                {rule}
-                            </span>
+                        <div style="color:#64748b; font-size:12px; margin:3px 0 7px;">
+                            {rule_name}
                         </div>
                         """,
                         unsafe_allow_html=True,
@@ -1222,6 +1342,20 @@ def render_sentence_layout(idx, sentence_key, item, sentence_id, matches):
             else:
                 st.caption("해당 없음")
 
+
+            decision = item.get("decision", {})
+            if has_decision_result(decision):
+                for label, key in (("태그 오류", "tagging_error_result"), ("태깅 병합 오류", "tagging_merge_result")):
+                    result = decision.get(key)
+                    result_level = normalize_suspicion_level(result)
+                    if result_level:
+                        st.markdown(
+                            f'<div style="font-size:13px; padding:2px 0;">'
+                            f'해당 문장에서 {label}가 의심됩니다. 의심도: '
+                            f'<span style="color:{SUSPICION_COLORS[result_level]}; font-weight:600;">'
+                            f'{SUSPICION_LABELS[result_level]}</span></div>',
+                            unsafe_allow_html=True,
+                        )
 
 if selected_doc_key is None:
     st.info("좌측 사이드바에서 기사를 선택하면 검수 대상 문장이 표시됩니다.")
@@ -1303,7 +1437,15 @@ else:
             item["matches"],
             key=lambda value: (value[0], value[1])
         )
+        decision_highlights = get_decision_highlights(item.get("decision", {}))
 
         with st.container():
-            render_sentence_layout(idx, sentence_key, item, sentence_id, matches)
+            render_sentence_layout(
+                idx,
+                sentence_key,
+                item,
+                sentence_id,
+                matches,
+                decision_highlights,
+            )
             continue
