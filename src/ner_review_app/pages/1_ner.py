@@ -73,6 +73,8 @@ RULE_TYPE_NAMES = {
 # 세부유형 화면 표시 명칭
 # 추후 하위 태그 내용 합쳐서 상위 태그 내용으로만 보이도록
 RULE_NAMES = {
+    "EXT_S003": "[DT] 태깅병합",
+
     # EXT_E003
     "EXT_E003_AF_001": "[AF] 법률명",
     "EXT_E003_AF_002": "[AF] 모델명",
@@ -343,11 +345,6 @@ def save_review_page(review_updates, assignee):
           AND doc_id = %s
           AND sentence_id = %s
           AND assignee = %s
-    return (
-        '<div style="white-space:pre-wrap; line-height:1.9; '
-        f'font-size:16px'>{"".join(rendered)}</div>'
-    )
-
     """
 
     with get_postgre_connect() as conn:
@@ -699,9 +696,7 @@ def highlighted_form_with_decision(form, matches, decision_highlights):
         rule_spans = [span for span in active_spans if span[2] == "rule"]
         styles = []
         if rule_spans:
-            styles.extend(
-                ["background:#ffe08a", "padding:2px 3px", "border-radius:4px"]
-            )
+            styles.append("background-color:#ffe08a")
         if decision_spans:
             level = max(
                 (span[3] for span in decision_spans),
@@ -1321,7 +1316,7 @@ def render_sentence_layout(idx, sentence_key, item, sentence_id, matches, decisi
             st.markdown(
                 """
                 <div style="padding-top:10px; font-size:14px; font-weight:600;">
-                    의심 되는 오류 유형
+                    오류 유형 상세 정보
                 </div>
                 """,
                 unsafe_allow_html=True,
@@ -1332,9 +1327,10 @@ def render_sentence_layout(idx, sentence_key, item, sentence_id, matches, decisi
                     rule_name = RULE_NAMES.get(rule, rule)
 
                     st.markdown(
+                        # <div style="color:#EF4444; font-size:12px; margin:3px 0 7px;">
                         f"""
-                        <div style="color:#64748b; font-size:12px; margin:3px 0 7px;">
-                            {rule_name}
+                        <div style="font-size:13px; padding:2px 0;">
+                            <span style="color:#EF4444; font-weight:600;">{html.escape(rule_name)}</span> 오류가 의심됩니다.
                         </div>
                         """,
                         unsafe_allow_html=True,
@@ -1345,17 +1341,28 @@ def render_sentence_layout(idx, sentence_key, item, sentence_id, matches, decisi
 
             decision = item.get("decision", {})
             if has_decision_result(decision):
-                for label, key in (("태그 오류", "tagging_error_result"), ("태깅 병합 오류", "tagging_merge_result")):
+                decision_results = []
+                for label, key in (
+                    ("태그 오류", "tagging_error_result"),
+                    ("태깅 병합 오류", "tagging_merge_result"),
+                ):
                     result = decision.get(key)
                     result_level = normalize_suspicion_level(result)
                     if result_level:
-                        st.markdown(
-                            f'<div style="font-size:13px; padding:2px 0;">'
-                            f'해당 문장에서 {label}가 의심됩니다. 의심도: '
-                            f'<span style="color:{SUSPICION_COLORS[result_level]}; font-weight:600;">'
-                            f'{SUSPICION_LABELS[result_level]}</span></div>',
-                            unsafe_allow_html=True,
-                        )
+                        decision_results.append((result_level, label))
+
+                for result_level, label in sorted(
+                    decision_results,
+                    key=lambda value: SUSPICION_PRIORITY[value[0]],
+                    reverse=True,
+                ):
+                    st.markdown(
+                        f'<div style="font-size:13px; padding:2px 0;">'
+                        f'{html.escape(label)}가 의심됩니다. '
+                        f'<span style="color:{SUSPICION_COLORS[result_level]}; font-weight:600;">'
+                        f'의심도: {SUSPICION_LABELS[result_level]}</span></div>',
+                        unsafe_allow_html=True,
+                    )
 
 if selected_doc_key is None:
     st.info("좌측 사이드바에서 기사를 선택하면 검수 대상 문장이 표시됩니다.")
