@@ -288,12 +288,18 @@ def mark_review_complete_if_modified(
 ):
     value_key = modified_key.replace("modified_form_", "modified_value_", 1)
     current_form = st.session_state.get(modified_key, st.session_state.get(value_key, ""))
+    was_completed = st.session_state.get(status_key) == "완료"
     if not is_modified_form(current_form, original_form):
         st.toast("수정된 내용이 없습니다.")
         return
     st.session_state[value_key] = current_form
     st.session_state[status_key] = "완료"
-    if item and assignee and review_method != BATCH_REVIEW_METHOD:
+    # 일괄처리의 최초 결과는 일괄저장으로 반영하되, 이미 저장된 문장의
+    # 재수정은 개별 완료 버튼으로 즉시 DB에 반영한다.
+    should_save = review_method != BATCH_REVIEW_METHOD or was_completed
+    if was_completed:
+        st.session_state[review_widget_key("revised", modified_key)] = True
+    if item and assignee and should_save:
         save_review_item(item, assignee, current_form, "완료")
     st.toast("수정완료로 저장되었습니다.")
 
@@ -327,7 +333,7 @@ def save_review_page(review_updates, assignee):
             review_status = %s,
             is_modified = %s,
             updated_at = CASE
-                WHEN %s = '완료' THEN COALESCE(updated_at, CURRENT_TIMESTAMP)
+                WHEN %s = '완료' THEN CURRENT_TIMESTAMP
                 ELSE NULL
             END
         WHERE data_version = %s
@@ -407,6 +413,7 @@ def fetch_rule_results(
     offset,
     review_method=None,
     assignee=None,
+    search_text="",
 ):
     condition = " OR ".join(f'r."{rule}" IS TRUE' for rule in selected_rules)
     review_method_condition = ""
@@ -416,6 +423,17 @@ def fetch_rule_results(
         review_method_condition = "AND h.review_method = %s"
         join_review_method_condition = "AND h.review_method = %s"
         query_params.append(review_method)
+
+    search_condition = ""
+    search_pattern = f"%{search_text.strip()}%" if search_text.strip() else ""
+    if search_pattern:
+        search_condition = """
+              AND (
+                  CAST(h.doc_id AS TEXT) ILIKE %s
+                  OR CAST(h.sentence_id AS TEXT) ILIKE %s
+              )
+        """
+        query_params.extend([search_pattern, search_pattern])
 
     rule_match_condition = "" if review_method == "휴먼검수" or not selected_rules else f"""
               AND (
@@ -460,6 +478,7 @@ def fetch_rule_results(
               AND h.doc_id IS NOT NULL
               AND h.assignee = %s
               {review_method_condition}
+              {search_condition}
               {rule_match_condition}
         ), target_docs AS (
             SELECT
@@ -492,6 +511,7 @@ def fetch_rule_results(
          AND h.assignee = %s
          AND h.doc_id = t.doc_id
          {join_review_method_condition}
+         {search_condition}
         LEFT JOIN public.ner_rule_results_3 AS r
           ON r.data_version = h.data_version
          AND regexp_replace(r.data_version, '^.*_', '') = h.press
@@ -502,11 +522,14 @@ def fetch_rule_results(
     """
 
     with get_postgre_connect() as conn:
+        execute_params = [*query_params, limit, offset, assignee]
+        if review_method:
+            execute_params.append(review_method)
+        if search_pattern:
+            execute_params.extend([search_pattern, search_pattern])
         rows = conn.execute(
             query,
-            (*query_params, limit, offset, assignee, review_method)
-            if review_method
-            else (*query_params, limit, offset, assignee),
+            execute_params,
         ).fetchall()
     filtered_article_count = int(rows[0]["filtered_article_count"]) if rows else 0
     return rows, filtered_article_count
@@ -701,6 +724,13 @@ if requested_press in press_options:
 elif st.session_state.get("selected_press") not in press_options:
     st.session_state.selected_press = press_options[0]
 
+search_text = st.sidebar.text_input(
+    "기사ID 또는 문장ID 검색",
+    key="review_search_text",
+    placeholder="기사ID 또는 문장ID 검색",
+    label_visibility="collapsed"
+).strip()
+
 with st.sidebar.popover(f"언론사 ({st.session_state.selected_press})", width="stretch"):
     selected_press = st.radio(
         "언론사 선택",
@@ -820,7 +850,13 @@ with ner_header_placeholder.container(border=False):
         unsafe_allow_html=True,
     )
 
-filter_key = (selected_press, selected_review_method, selected_types, selected_rules)
+filter_key = (
+    selected_press,
+    selected_review_method,
+    selected_types,
+    selected_rules,
+    search_text,
+)
 
 if st.session_state.get("rule_filter_key") != filter_key:
     st.session_state["rule_filter_key"] = filter_key
@@ -907,6 +943,7 @@ try:
         offset,
         selected_review_method,
         authenticated_assignee,
+        search_text,
     )
 except Exception as exc:
     st.error(f"룰 검출 결과 조회 실패: {exc}")
@@ -1071,10 +1108,14 @@ def render_sentence_layout(idx, sentence_key, item, sentence_id, matches):
 
     edit_col, rule_col = st.columns([3, 1])
     with edit_col:
-        with st.container(border=True, height=410):
+        with st.container(border=True, height="content"):
             if status == "완료":
                 completion_label = (
-                    "수정완료"
+                    "재수정완료"
+                    if st.session_state.get(
+                        review_widget_key("revised", modified_key), False
+                    )
+                    else "수정완료"
                     if is_modified_form(
                         get_modified_form(sentence_key, item),
                         item.get("original_form") or "",
@@ -1104,7 +1145,7 @@ def render_sentence_layout(idx, sentence_key, item, sentence_id, matches):
                 action_col, no_issue_col = st.columns(2)
             with action_col:
                 st.button(
-                    "수정완료",
+                    "재수정완료" if status == "완료" else "수정완료",
                     key=review_widget_key("complete_modified", sentence_key),
                     width="stretch",
                     on_click=mark_review_complete_if_modified,
@@ -1137,7 +1178,7 @@ def render_sentence_layout(idx, sentence_key, item, sentence_id, matches):
                     ),
                 )
     with rule_col:
-        with st.container(border=True, height=410):
+        with st.container(border=True, height="stretch"):
             st.markdown(
                 """
                 <div style="font-size:14px; font-weight:600; margin-bottom:4px;">
@@ -1199,6 +1240,7 @@ else:
             0,
             selected_review_method,
             authenticated_assignee,
+            search_text,
         )
         batch_grouped = group_sentences(all_batch_rows, selected_rules)
         batch_sentence_keys = list(batch_grouped)
