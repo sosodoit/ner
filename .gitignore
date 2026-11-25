@@ -13,6 +13,7 @@ analysis/
 *.jsonl
 tests/
 fixtures/
+run_response_2_temp.ipynb
 
 ### Python ###
 # Byte-compiled / optimized / DLL files

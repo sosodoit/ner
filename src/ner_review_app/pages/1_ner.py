@@ -6,6 +6,7 @@ import hashlib
 import hmac
 import streamlit as st
 from src.ner_review_app.modules.postgredb import get_postgre_connect
+from src.ner_review.schema import ERROR_LV1_MAP, ERROR_LV2_MAP
 
 RULES_BY_TYPE = {
     "EXT_S003": ["EXT_S003"],
@@ -132,6 +133,17 @@ REVIEWER_CREDENTIAL_ENV_PREFIX = "NER_REVIEWER_"
 REVIEWER_QUERY_PARAM = "reviewer"
 REVIEWER_TOKEN_QUERY_PARAM = "reviewer_token"
 BATCH_REVIEW_METHOD = "일괄처리"
+RESPONSE_STATUS_NAMES = {
+    "error": "오류",
+    "normal": "정상",
+    "unreviewed": "미검수",
+    "failed": "검수 실패",
+    "pending": "검수 대기",
+    None: "미지정",
+}
+RESPONSE_ERROR_NAMES = {
+    code: label for label, code in {**ERROR_LV1_MAP, **ERROR_LV2_MAP}.items()
+}
 
 
 def get_reviewer_credentials():
@@ -461,6 +473,69 @@ def fetch_press_versions():
     return press_versions
 
 
+def response_filter_condition(review_needed, review_status):
+    conditions = ["v.entity_id IS NOT NULL"]
+    params = []
+    if review_needed != "전체":
+        if review_needed == "미지정":
+            conditions.append("v.review_needed IS NULL")
+        else:
+            conditions.append("v.review_needed = %s")
+            params.append(review_needed == "필요")
+    if review_status != "전체":
+        if review_status is None:
+            conditions.append("v.review_status IS NULL")
+        else:
+            conditions.append("v.review_status = %s")
+            params.append(review_status)
+    return " AND ".join(conditions), params
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def fetch_response_statuses(press, data_versions):
+    with get_postgre_connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT DISTINCT v.review_status
+            FROM public.ner_reviews AS v
+            JOIN public.ner_runs AS run ON run.run_id = v.run_id
+            WHERE v.entity_id IS NOT NULL
+              AND SPLIT_PART(v.run_id, '_', 7) = %s
+              AND run.data_version = ANY(%s)
+            ORDER BY v.review_status NULLS LAST
+            """,
+            (press, data_versions),
+        ).fetchall()
+    return [row["review_status"] for row in rows]
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def fetch_response_results(data_version, press, doc_id, review_needed, review_status):
+    condition, params = response_filter_condition(review_needed, review_status)
+    with get_postgre_connect() as conn:
+        rows = conn.execute(
+            f"""
+            SELECT v.run_id, SPLIT_PART(v.run_id, '_', 7) AS press,
+                   v.doc_id, v.sentence_id, v.entity_id,
+                   v.target_span, v.target_type, v.corrected_span,
+                   v.error_lv1, v.error_lv2, v.reason,
+                   v.review_needed, v.review_status
+            FROM public.ner_reviews AS v
+            JOIN public.ner_runs AS run ON run.run_id = v.run_id
+            WHERE run.data_version = %s
+              AND SPLIT_PART(v.run_id, '_', 7) = %s
+              AND v.doc_id = %s
+              AND {condition}
+            ORDER BY v.sentence_id, v.entity_id, v.run_id DESC
+            """,
+            [data_version, press, doc_id, *params],
+        ).fetchall()
+    results = {}
+    for row in rows:
+        results.setdefault(row["sentence_id"], []).append(row)
+    return results
+
+
 @st.cache_data(ttl=3600, show_spinner=False)
 def fetch_rule_results(
     selected_press,
@@ -471,6 +546,8 @@ def fetch_rule_results(
     review_method=None,
     assignee=None,
     search_text="",
+    response_review_needed="전체",
+    response_review_status="전체",
 ):
     condition = " OR ".join(f'r."{rule}" IS TRUE' for rule in selected_rules)
     review_method_condition = ""
@@ -491,6 +568,26 @@ def fetch_rule_results(
               )
         """
         query_params.extend([search_pattern, search_pattern])
+
+    response_condition = ""
+    response_params = []
+    if response_review_needed != "전체" or response_review_status != "전체":
+        condition_sql, response_params = response_filter_condition(
+            response_review_needed, response_review_status
+        )
+        response_condition = f"""
+              AND EXISTS (
+                  SELECT 1
+                  FROM public.ner_reviews AS v
+                  JOIN public.ner_runs AS run ON run.run_id = v.run_id
+                  WHERE run.data_version = h.data_version
+                    AND SPLIT_PART(v.run_id, '_', 7) = h.press
+                    AND v.doc_id = h.doc_id
+                    AND v.sentence_id = h.sentence_id
+                    AND {condition_sql}
+              )
+        """
+        query_params.extend(response_params)
 
     rule_match_condition = "" if review_method == "휴먼검수" or not selected_rules else f"""
               AND (
@@ -536,6 +633,7 @@ def fetch_rule_results(
               AND h.assignee = %s
               {review_method_condition}
               {search_condition}
+              {response_condition}
               {rule_match_condition}
         ), target_docs AS (
             SELECT
@@ -573,6 +671,7 @@ def fetch_rule_results(
          AND h.doc_id = t.doc_id
          {join_review_method_condition}
          {search_condition}
+         {response_condition}
         LEFT JOIN public.ner_rule_results_3 AS r
           ON r.data_version = h.data_version
          AND regexp_replace(r.data_version, '^.*_', '') = h.press
@@ -593,6 +692,7 @@ def fetch_rule_results(
             execute_params.append(review_method)
         if search_pattern:
             execute_params.extend([search_pattern, search_pattern])
+        execute_params.extend(response_params)
         rows = conn.execute(
             query,
             execute_params,
@@ -1082,6 +1182,33 @@ selected_review_method = (
     else review_method_db_by_display[selected_review_method_display]
 )
 
+try:
+    response_statuses = fetch_response_statuses(
+        selected_press, press_versions[selected_press]
+    )
+except Exception as exc:
+    st.error(f"AI 검수 판정 목록 조회 실패: {exc}")
+    st.stop()
+
+response_status_options = ["전체", *response_statuses]
+if st.session_state.get("response_review_status", "전체") not in response_status_options:
+    st.session_state["response_review_status"] = "전체"
+
+with st.sidebar.popover("AI 검수 결과 필터", width="stretch"):
+    response_review_needed = st.selectbox(
+        "추가 검토 필요 여부",
+        ["전체", "필요", "불필요", "미지정"],
+        key="response_review_needed",
+    )
+    response_review_status = st.selectbox(
+        "AI 검수 판정",
+        response_status_options,
+        format_func=lambda value: RESPONSE_STATUS_NAMES.get(value, value),
+        key="response_review_status",
+    )
+    st.caption("조건을 선택하면 일치하는 개체가 있는 기사와 문장만 표시합니다.")
+    st.caption("전체 기사보기에서는 모든 문장을 표시하며, AI 검수 결과에만 조건을 적용합니다.")
+
 selected_types = multi_select_filter(
     "오류유형",
     RULE_TYPES,
@@ -1166,6 +1293,8 @@ filter_key = (
     selected_types,
     selected_rules,
     search_text,
+    response_review_needed,
+    response_review_status,
 )
 
 if st.session_state.get("rule_filter_key") != filter_key:
@@ -1254,6 +1383,8 @@ try:
         selected_review_method,
         authenticated_assignee,
         search_text,
+        response_review_needed,
+        response_review_status,
     )
 except Exception as exc:
     st.error(f"룰 검출 결과 조회 실패: {exc}")
@@ -1308,7 +1439,7 @@ st.sidebar.markdown(
 
 if display_doc_keys:
     selection_key = "selected_doc_" + hashlib.md5(
-        f"{selected_press}|{selected_types}|{selected_rules}|{offset}".encode("utf-8")
+        f"{filter_key}|{offset}".encode("utf-8")
     ).hexdigest()
 
     selected_doc_key = st.sidebar.radio(
@@ -1322,7 +1453,7 @@ if display_doc_keys:
 else:
     selected_doc_key = None
     st.sidebar.info("조건에 해당하는 기사가 없습니다.")
-    st.info("현재 담당자로 배정된 기사가 없습니다.")
+    st.info("현재 담당자에게 배정된 기사 중 선택한 조건에 해당하는 기사가 없습니다.")
 
 # 페이지 이동 영역
 st.sidebar.markdown(
@@ -1411,6 +1542,57 @@ with next_col:
 # -----------------------------------------------------------------------------
 # 본문 - 선택한 기사에 포함된 문장 표시
 # -----------------------------------------------------------------------------
+def render_response_results(responses):
+    st.markdown(
+        """
+        <div style="padding-top:10px; font-size:14px; font-weight:600;">
+            AI 검수 결과
+        </div>
+        """,
+        unsafe_allow_html=True,
+    ) 
+    
+    if not responses:
+        st.caption("해당 없음")
+        return
+
+    for response in responses:
+        status = RESPONSE_STATUS_NAMES.get(
+            response.get("review_status"), response.get("review_status")
+        )
+        needed = {True: "필요", False: "불필요", None: "미지정"}.get(
+            response.get("review_needed"), "미지정"
+        )
+        errors = [
+            RESPONSE_ERROR_NAMES.get(response[key], response[key])
+            for key in ("error_lv1", "error_lv2")
+            if response.get(key)
+        ]
+        corrected_span = response.get("corrected_span")
+        fields = [
+            ("개체 ID", response["entity_id"]),
+            ("개체 유형", response.get("target_type") or "미지정"),
+            ("AI 판정", status),
+            ("추가 검토", needed),
+            ("검수 대상", response.get("target_span") or "없음"),
+            ("수정 제안", corrected_span if corrected_span is not None else "없음"),
+            ("오류 유형", " · ".join(errors) or "없음"),
+            ("판단 사유", response.get("reason") or "없음"),
+        ]
+        details = "".join(
+            f'<div style="margin:4px 0; white-space:pre-wrap; word-break:break-word;">'
+            f'<strong>{html.escape(label)}</strong>: {html.escape(str(value))}</div>'
+            for label, value in fields
+        )
+        st.markdown(
+            '<div style="margin:8px 0; padding:10px; border:1px solid #E2E8F0; '
+            f'border-radius:6px; font-size:13px;">{details}</div>',
+            unsafe_allow_html=True,
+        )
+        with st.expander("검수 실행 정보"):
+            st.text(response["run_id"])
+
+
 def render_sentence_layout(idx, sentence_key, item, sentence_id, matches, decision_highlights):
     status_key = review_widget_key("review_status", sentence_key)
     modified_key = review_widget_key("modified_form", sentence_key)
@@ -1500,7 +1682,7 @@ def render_sentence_layout(idx, sentence_key, item, sentence_id, matches, decisi
             st.markdown(
                 """
                 <div style="padding-top:10px; font-size:14px; font-weight:600;">
-                    오류 유형 상세 정보
+                    검수 참고 정보
                 </div>
                 """,
                 unsafe_allow_html=True,
@@ -1547,6 +1729,9 @@ def render_sentence_layout(idx, sentence_key, item, sentence_id, matches, decisi
                         f'의심도: {SUSPICION_LABELS[result_level]}</span></div>',
                         unsafe_allow_html=True,
                     )
+
+            st.divider()
+            render_response_results(item.get("responses", []))
 
 if selected_doc_key is None:
     st.info("좌측 사이드바에서 기사를 선택하면 검수 대상 문장이 표시됩니다.")
@@ -1598,6 +1783,22 @@ else:
 
     selected_doc_id = selected_doc_key[1]
 
+    try:
+        response_results = fetch_response_results(
+            selected_doc_key[0],
+            selected_press,
+            selected_doc_id,
+            response_review_needed,
+            response_review_status,
+        )
+    except Exception as exc:
+        st.error(f"AI 검수 결과 조회 실패: {exc}")
+        st.stop()
+
+    for sentence_key in selected_sentence_keys:
+        item = display_grouped[sentence_key]
+        item["responses"] = response_results.get(item["sentence_id"], [])
+
     if selected_review_method == BATCH_REVIEW_METHOD and not show_full_article:
         # 일괄처리 대상은 현재 페이지가 아니라 선택 언론사의 전체 대상 문장이다.
         all_batch_rows, _ = fetch_rule_results(
@@ -1609,6 +1810,8 @@ else:
             selected_review_method,
             authenticated_assignee,
             search_text,
+            response_review_needed,
+            response_review_status,
         )
         batch_grouped = group_sentences(all_batch_rows, selected_rules)
         batch_sentence_keys = list(batch_grouped)
