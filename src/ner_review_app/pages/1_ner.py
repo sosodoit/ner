@@ -1330,36 +1330,6 @@ selected_review_method = (
     else review_method_db_by_display[selected_review_method_display]
 )
 
-response_review_needed = "전체"
-response_review_status = "error"
-if show_detailed_review:
-    try:
-        response_statuses = fetch_response_statuses(
-            selected_press, press_versions[selected_press]
-        )
-    except Exception as exc:
-        st.error(f"검수 판정 목록 조회 실패: {exc}")
-        st.stop()
-
-    response_status_options = ["전체", *response_statuses]
-    if st.session_state.get("response_review_status", "전체") not in response_status_options:
-        st.session_state["response_review_status"] = "전체"
-
-    with st.sidebar.popover("검수 결과 필터", width="stretch"):
-        response_review_needed = st.selectbox(
-            "추가 검토 필요 여부",
-            ["전체", "필요", "불필요", "미지정"],
-            key="response_review_needed",
-        )
-        response_review_status = st.selectbox(
-            "검수 판정",
-            response_status_options,
-            format_func=lambda value: RESPONSE_STATUS_NAMES.get(value, value),
-            key="response_review_status",
-        )
-        st.caption("조건에 맞는 검수 대상이 있는 기사와 문장만 표시합니다.")
-        st.caption("전체 기사보기에서는 모든 문장을 표시하며, 참고 정보에만 조건을 적용합니다.")
-
 selected_types = multi_select_filter(
     "오류유형",
     ERROR_TYPES,
@@ -1369,6 +1339,22 @@ selected_types = multi_select_filter(
 )
 
 selected_rules = rules_for_error_types(selected_types)
+
+response_review_needed = "전체"
+response_review_status = "error"
+if show_detailed_review:
+    response_status_options = ["error", "normal"]
+    if st.session_state.get("response_review_status") not in response_status_options:
+        st.session_state["response_review_status"] = "error"
+    response_status_label = RESPONSE_STATUS_NAMES[st.session_state["response_review_status"]]
+    with st.sidebar.popover(f"AI결과 ({response_status_label})", width="stretch"):
+        response_review_status = st.radio(
+            "검수 판정",
+            response_status_options,
+            format_func=lambda value: RESPONSE_STATUS_NAMES[value],
+            key="response_review_status",
+            label_visibility="collapsed",
+        )
 
 with ner_header_placeholder.container(border=False):
     selected_type_names = [
