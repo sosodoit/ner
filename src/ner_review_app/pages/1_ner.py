@@ -6,7 +6,6 @@ import hashlib
 import hmac
 import streamlit as st
 from src.ner_review_app.modules.postgredb import get_postgre_connect
-from src.ner_review.schema import ERROR_LV1_MAP, ERROR_LV2_MAP
 
 RULES_BY_TYPE = {
     "EXT_S003": ["EXT_S003"],
@@ -141,8 +140,16 @@ RESPONSE_STATUS_NAMES = {
     "pending": "검수 대기",
     None: "미지정",
 }
-RESPONSE_ERROR_NAMES = {
-    code: label for label, code in {**ERROR_LV1_MAP, **ERROR_LV2_MAP}.items()
+RESPONSE_ERROR_MESSAGES = {
+    "tagging_error": "태그 오류가 의심됩니다.",
+    "tagging_wrong": "불필요한 태깅이 의심됩니다.",
+    "tagging_miss": "태깅 누락이 의심됩니다.",
+    "span_error": "태그 범위 오류가 의심됩니다.",
+    "etc": "태깅 내용을 확인해 주세요.",
+    "span_expansion": "태그 범위를 넓혀야 하는지 확인해 주세요.",
+    "span_reduction": "태그 범위를 줄여야 하는지 확인해 주세요.",
+    "span_tagging_split": "하나의 태그를 나누어야 하는지 확인해 주세요.",
+    "span_tagging_merge": "나뉜 태그를 합쳐야 하는지 확인해 주세요.",
 }
 
 
@@ -908,10 +915,17 @@ def get_decision_highlights(decision):
     return [(entity, level) for entity in entities if level]
 
 
-def highlighted_form_with_decision(form, matches, decision_highlights):
-    """Render rule highlights and decision suspicion underlines together."""
+def highlighted_form_with_decision(form, matches, decision_highlights, responses=()):
+    """검수 대상 우선 강조에 기존 의심 밑줄과 수정 제안 테두리를 함께 표시한다."""
     form = form or ""
-    if not decision_highlights:
+    suggestions = [
+        response for response in responses
+        if response.get("target_span")
+        and response.get("corrected_span") is not None
+        and response["corrected_span"] != response["target_span"]
+        and response["target_span"] in form
+    ]
+    if not responses and not decision_highlights and not suggestions:
         return highlighted_form(form, matches)
 
     spans = []
@@ -922,16 +936,28 @@ def highlighted_form_with_decision(form, matches, decision_highlights):
             for match in re.finditer(re.escape(entity), form)
         )
 
-    rule_patterns = {
+    for response in suggestions:
+        spans.extend(
+            (match.start(), match.end(), "response", response["corrected_span"])
+            for match in re.finditer(re.escape(response["target_span"]), form)
+        )
+
+    # 검수 결과가 있으면 대상 표현 전체를 그대로 찾아 강조한다.
+    # 쉼표나 줄바꿈도 대상 표현의 일부이므로 룰 패턴처럼 나누지 않는다.
+    highlight_patterns = {
+        response["target_span"]
+        for response in responses
+        if response.get("target_span")
+    } if responses else {
         pattern_part.strip()
         for _, pattern in matches
         if pattern != "패턴 없음"
         for pattern_part in re.split(r",\s*|\r?\n", str(pattern))
         if pattern_part.strip()
     }
-    for pattern in rule_patterns:
+    for pattern in highlight_patterns:
         spans.extend(
-            (match.start(), match.end(), "rule", None)
+            (match.start(), match.end(), "highlight", None)
             for match in re.finditer(re.escape(pattern), form)
         )
 
@@ -957,9 +983,10 @@ def highlighted_form_with_decision(form, matches, decision_highlights):
             continue
 
         decision_spans = [span for span in active_spans if span[2] == "decision"]
-        rule_spans = [span for span in active_spans if span[2] == "rule"]
+        highlight_spans = [span for span in active_spans if span[2] == "highlight"]
+        response_spans = [span for span in active_spans if span[2] == "response"]
         styles = []
-        if rule_spans:
+        if highlight_spans:
             styles.append("background-color:#ffe08a")
         if decision_spans:
             level = max(
@@ -974,7 +1001,17 @@ def highlighted_form_with_decision(form, matches, decision_highlights):
                     "text-underline-offset:3px",
                 ]
             )
-        rendered.append(f'<span style="{"; ".join(styles)}">{text}</span>')
+        rendered_text = f'<span style="{"; ".join(styles)}">{text}</span>'
+        if response_spans:
+            suggestions_text = " / ".join(dict.fromkeys(
+                span[3] or "삭제" for span in response_spans
+            ))
+            rendered_text = (
+                '<span style="outline:1px dashed #0F766E; outline-offset:2px; '
+                'border-radius:2px;" '
+                f'title="수정 제안: {html.escape(suggestions_text)}">{rendered_text}</span>'
+            )
+        rendered.append(rendered_text)
 
     return (
         '<div style="white-space:pre-wrap; line-height:1.9; '
@@ -1048,6 +1085,7 @@ def sentence_sort_key(sentence_key):
 # 데이터 조회
 # -----------------------------------------------------------------------------
 authenticated_assignee = authenticate_reviewer()
+show_detailed_review = authenticated_assignee == "김소희"
 ner_header_placeholder = st.empty()
 
 try:
@@ -1182,32 +1220,35 @@ selected_review_method = (
     else review_method_db_by_display[selected_review_method_display]
 )
 
-try:
-    response_statuses = fetch_response_statuses(
-        selected_press, press_versions[selected_press]
-    )
-except Exception as exc:
-    st.error(f"AI 검수 판정 목록 조회 실패: {exc}")
-    st.stop()
+response_review_needed = "전체"
+response_review_status = "error"
+if show_detailed_review:
+    try:
+        response_statuses = fetch_response_statuses(
+            selected_press, press_versions[selected_press]
+        )
+    except Exception as exc:
+        st.error(f"검수 판정 목록 조회 실패: {exc}")
+        st.stop()
 
-response_status_options = ["전체", *response_statuses]
-if st.session_state.get("response_review_status", "전체") not in response_status_options:
-    st.session_state["response_review_status"] = "전체"
+    response_status_options = ["전체", *response_statuses]
+    if st.session_state.get("response_review_status", "전체") not in response_status_options:
+        st.session_state["response_review_status"] = "전체"
 
-with st.sidebar.popover("AI 검수 결과 필터", width="stretch"):
-    response_review_needed = st.selectbox(
-        "추가 검토 필요 여부",
-        ["전체", "필요", "불필요", "미지정"],
-        key="response_review_needed",
-    )
-    response_review_status = st.selectbox(
-        "AI 검수 판정",
-        response_status_options,
-        format_func=lambda value: RESPONSE_STATUS_NAMES.get(value, value),
-        key="response_review_status",
-    )
-    st.caption("조건을 선택하면 일치하는 개체가 있는 기사와 문장만 표시합니다.")
-    st.caption("전체 기사보기에서는 모든 문장을 표시하며, AI 검수 결과에만 조건을 적용합니다.")
+    with st.sidebar.popover("검수 결과 필터", width="stretch"):
+        response_review_needed = st.selectbox(
+            "추가 검토 필요 여부",
+            ["전체", "필요", "불필요", "미지정"],
+            key="response_review_needed",
+        )
+        response_review_status = st.selectbox(
+            "검수 판정",
+            response_status_options,
+            format_func=lambda value: RESPONSE_STATUS_NAMES.get(value, value),
+            key="response_review_status",
+        )
+        st.caption("조건에 맞는 검수 대상이 있는 기사와 문장만 표시합니다.")
+        st.caption("전체 기사보기에서는 모든 문장을 표시하며, 참고 정보에만 조건을 적용합니다.")
 
 selected_types = multi_select_filter(
     "오류유형",
@@ -1543,54 +1584,50 @@ with next_col:
 # 본문 - 선택한 기사에 포함된 문장 표시
 # -----------------------------------------------------------------------------
 def render_response_results(responses):
-    st.markdown(
-        """
-        <div style="padding-top:10px; font-size:14px; font-weight:600;">
-            AI 검수 결과
-        </div>
-        """,
-        unsafe_allow_html=True,
-    ) 
-    
-    if not responses:
-        st.caption("해당 없음")
-        return
-
+    displayed = set()
     for response in responses:
-        status = RESPONSE_STATUS_NAMES.get(
-            response.get("review_status"), response.get("review_status")
-        )
-        needed = {True: "필요", False: "불필요", None: "미지정"}.get(
-            response.get("review_needed"), "미지정"
-        )
-        errors = [
-            RESPONSE_ERROR_NAMES.get(response[key], response[key])
+        # 여러 실행에서 같은 참고 정보가 저장되어도 한 번만 표시한다.
+        signature = tuple(response.get(key) for key in (
+            "entity_id", "target_span", "corrected_span", "error_lv1", "error_lv2", "reason"
+        ))
+        if signature in displayed:
+            continue
+        displayed.add(signature)
+
+        messages = [
+            RESPONSE_ERROR_MESSAGES[response[key]]
             for key in ("error_lv1", "error_lv2")
-            if response.get(key)
+            if response.get(key) in RESPONSE_ERROR_MESSAGES
         ]
+        reason = (response.get("reason") or "").strip()
+        reason = reason.replace("LLM 검수", "검수").replace("AI 검수", "검수")
+        reason = re.sub(r"\b(?:LLM|AI)\b", "검수", reason)
+        if reason:
+            messages.append(reason if reason.endswith((".", "!", "?")) else f"{reason}.")
+        if not messages:
+            messages.append(
+                "오류가 의심됩니다. 원문의 태깅을 확인해 주세요."
+                if response.get("review_status") == "error"
+                else "검수 대상과 원문의 태깅을 비교해 주세요."
+            )
+
+        target_span = html.escape(response.get("target_span") or "대상 표현 없음")
+        details = f'<div><strong>검수 대상</strong>: {target_span}</div>'
         corrected_span = response.get("corrected_span")
-        fields = [
-            ("개체 ID", response["entity_id"]),
-            ("개체 유형", response.get("target_type") or "미지정"),
-            ("AI 판정", status),
-            ("추가 검토", needed),
-            ("검수 대상", response.get("target_span") or "없음"),
-            ("수정 제안", corrected_span if corrected_span is not None else "없음"),
-            ("오류 유형", " · ".join(errors) or "없음"),
-            ("판단 사유", response.get("reason") or "없음"),
-        ]
-        details = "".join(
-            f'<div style="margin:4px 0; white-space:pre-wrap; word-break:break-word;">'
-            f'<strong>{html.escape(label)}</strong>: {html.escape(str(value))}</div>'
-            for label, value in fields
+        if corrected_span is not None:
+            details += (
+                '<div style="margin-top:4px; color:#0F766E;">'
+                f'<strong>수정 제안</strong>: {html.escape(corrected_span or "삭제")}</div>'
+            )
+        details += (
+            '<div style="margin-top:6px;">'
+            f'{html.escape(" ".join(messages))}</div>'
         )
         st.markdown(
-            '<div style="margin:8px 0; padding:10px; border:1px solid #E2E8F0; '
-            f'border-radius:6px; font-size:13px;">{details}</div>',
+            '<div style="margin-top:12px; font-size:13px; line-height:1.7; '
+            f'white-space:pre-wrap; word-break:break-word;">{details}</div>',
             unsafe_allow_html=True,
         )
-        with st.expander("검수 실행 정보"):
-            st.text(response["run_id"])
 
 
 def render_sentence_layout(idx, sentence_key, item, sentence_id, matches, decision_highlights):
@@ -1598,6 +1635,12 @@ def render_sentence_layout(idx, sentence_key, item, sentence_id, matches, decisi
     modified_key = review_widget_key("modified_form", sentence_key)
     status = st.session_state.get(status_key, item.get("review_status") or "상태 없음")
     review_target = item.get("review_target") or "Y"
+    responses = item.get("responses", [])
+    # 빈 문자열도 '삭제' 제안이므로 수정 제안에 포함한다.
+    has_response_suggestion = any(
+        response.get("corrected_span") is not None for response in responses
+    )
+    visible_rule_matches = [] if has_response_suggestion else matches
 
     edit_col, rule_col = st.columns([3, 1])
     with edit_col:
@@ -1626,9 +1669,17 @@ def render_sentence_layout(idx, sentence_key, item, sentence_id, matches, decisi
                 )
             st.markdown('<div style="margin-bottom:0.35rem; font-weight:600;">원문</div>', unsafe_allow_html=True)
             st.markdown(
-                f"""<div style="min-height:100px; padding:0.75rem; border-radius:0.5rem; background-color:rgb(240, 242, 246); white-space:pre-wrap; word-break:break-word;">{highlighted_form_with_decision(item["original_form"], matches, decision_highlights)}</div>""",
+                f"""<div style="min-height:100px; padding:0.75rem; border-radius:0.5rem; background-color:rgb(240, 242, 246); white-space:pre-wrap; word-break:break-word;">{highlighted_form_with_decision(item["original_form"], matches, decision_highlights, item.get("responses", []))}</div>""",
                 unsafe_allow_html=True,
             )
+            if any(
+                response.get("target_span")
+                and response.get("corrected_span") is not None
+                and response["corrected_span"] != response["target_span"]
+                and response["target_span"] in item["original_form"]
+                for response in item.get("responses", [])
+            ):
+                st.caption("점선 테두리는 수정 제안이 있는 구간입니다. 마우스를 올리면 제안을 볼 수 있습니다.")
             st.markdown('<div style="margin-top:0.9rem; margin-bottom:0.35rem; font-weight:600;">수정문</div>', unsafe_allow_html=True)
             st.text_area(
                 "수정문 입력",
@@ -1688,8 +1739,8 @@ def render_sentence_layout(idx, sentence_key, item, sentence_id, matches, decisi
                 unsafe_allow_html=True,
             ) 
 
-            if matches:
-                for rule, _ in matches:
+            if visible_rule_matches:
+                for rule, _ in visible_rule_matches:
                     rule_name = RULE_NAMES.get(rule, rule)
 
                     st.markdown(
@@ -1701,11 +1752,7 @@ def render_sentence_layout(idx, sentence_key, item, sentence_id, matches, decisi
                         """,
                         unsafe_allow_html=True,
                     )
-            else:
-                st.caption("해당 없음")
-
-
-            decision = item.get("decision", {})
+            decision = item.get("decision", {}) if show_detailed_review else {}
             if has_decision_result(decision):
                 decision_results = []
                 for label, key in (
@@ -1730,8 +1777,9 @@ def render_sentence_layout(idx, sentence_key, item, sentence_id, matches, decisi
                         unsafe_allow_html=True,
                     )
 
-            st.divider()
-            render_response_results(item.get("responses", []))
+            render_response_results(responses)
+            if not visible_rule_matches and not has_decision_result(decision) and not responses:
+                st.caption("해당 없음")
 
 if selected_doc_key is None:
     st.info("좌측 사이드바에서 기사를 선택하면 검수 대상 문장이 표시됩니다.")
@@ -1792,7 +1840,7 @@ else:
             response_review_status,
         )
     except Exception as exc:
-        st.error(f"AI 검수 결과 조회 실패: {exc}")
+        st.error(f"검수 참고 정보 조회 실패: {exc}")
         st.stop()
 
     for sentence_key in selected_sentence_keys:
@@ -1875,7 +1923,10 @@ else:
             item["matches"],
             key=lambda value: (value[0], value[1])
         )
-        decision_highlights = get_decision_highlights(item.get("decision", {}))
+        decision_highlights = (
+            get_decision_highlights(item.get("decision", {}))
+            if show_detailed_review else []
+        )
 
         with st.container():
             render_sentence_layout(
