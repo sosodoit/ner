@@ -11,6 +11,8 @@ analysis/
 *.csv
 *.pkl
 *.jsonl
+tests/
+fixtures/
 
 ### Python ###
 # Byte-compiled / optimized / DLL files

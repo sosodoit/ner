@@ -66,30 +66,44 @@ def configure_logging():
 # ***************************************************
 # * API 클라이언트 생성
 # ***************************************************
-def create_client():
-    if API_PROVIDER == "OPENAI":
+def create_client(provider=None, **options):
+    provider = provider or API_PROVIDER
+    if provider == "OPENAI":
         api_key = os.getenv("OPENAI_API_KEY")
         base_url = None
-    elif API_PROVIDER == "OPENROUTER":
+    elif provider == "OPENROUTER":
         api_key = os.getenv("OPENROUTER_API_KEY")
         base_url = "https://openrouter.ai/api/v1"
-    elif API_PROVIDER == "CLAUDE":
+    elif provider == "CLAUDE":
         from anthropic import Anthropic
 
         client = Anthropic(api_key=os.getenv("CLAUDE_API_KEY"))
         return wrap_anthropic(client)
     else:
-        raise ValueError(f"지원하지 않는 API_PROVIDER: {API_PROVIDER}")
+        raise ValueError(f"지원하지 않는 API_PROVIDER: {provider}")
 
     client = OpenAI(
         api_key=api_key,
         **({"base_url": base_url} if base_url else {}),
+        **options,
     )
     return wrap_openai(client)
 
 # ***************************************************
 # * 모델 호출 함수 생성
 # ***************************************************
+def response_request(model, instructions, article_input):
+    return {
+        "model": model,
+        "instructions": instructions,
+        "input": article_input,
+        "text": {"format": {
+            "type": "json_schema", "name": "ner_response",
+            "strict": True, "schema": RESPONSE_SCHEMA,
+        }},
+    }
+
+
 def create_model_caller(client):
     @traceable(name="ner_review", run_type="chain")
     def call_model(instructions, article_input):
@@ -110,19 +124,7 @@ def create_model_caller(client):
                     },
                 )
 
-            return client.responses.create(
-                model=MODEL_NAME,
-                instructions=instructions,
-                input=article_input,
-                text={
-                    "format": {
-                        "type": "json_schema",
-                        "name": "ner_response",
-                        "strict": True,
-                        "schema": RESPONSE_SCHEMA,
-                    }
-                }
-            )
+            return client.responses.create(**response_request(MODEL_NAME, instructions, article_input))
         except Exception:
             raise ApiRequestError("LLM API request failed") from None
     return call_model
