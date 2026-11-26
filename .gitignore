@@ -12,7 +12,6 @@ analysis/
 *.pkl
 *.jsonl
 tests/
-fixtures/
 run_response_2_temp.ipynb
 
 ### Python ###

@@ -24,6 +24,8 @@ def home():
     st.markdown("다크모드는 보장 못합니다. 화이트모드 사용 권장드립니다.")
     st.markdown("검수화면에서는 배정받은 기사만 확인이 가능합니다.")
     st.markdown("검수현황에서는 휴먼검수대상의 검수현황 확인이 가능합니다.")
+    st.markdown("배정 밖 기사에서는 원본 기사 중 검수 대상에 없는 기사를 표본 확인할 수 있습니다.")
+    st.markdown("개체명 목록에서는 출현빈도와 위치를 보고 수정완료 기사를 재집계할 수 있습니다.")
     st.markdown("검수방식에 대한 설명입니다.")
     st.markdown("1.일괄처리: 오태깅이 의심되는 개체명이 있는 문장들이며, 일괄처리 기능을 사용합니다.")
     st.markdown("2.휴먼검수: LLM 검수를 통해 오류 의심이 드는 문장들이며, 휴먼검수합니다.")
@@ -49,15 +51,35 @@ pages = [
         default=True,
     ),
     st.Page(
+        "pages/2_dashboard.py",
+        title="검수현황",
+        icon="ℹ️",
+    ),
+    st.Page(
         "pages/1_ner.py",
-        title="NER 검수",
+        title="휴먼검수",
         icon="1️⃣",
     ),
     st.Page(
-        "pages/2_dashboard.py",
-        title="검수 현황",
+        "pages/3_martial_review.py",
+        title="계엄기사",
         icon="2️⃣",
     ),
+    st.Page(
+        "pages/4_batch_review.py",
+        title="일괄처리",
+        icon="3️⃣",
+    ),
+    st.Page(
+        "pages/5_unassigned_articles.py",
+        title="샘플검수",
+        icon="4️⃣",
+    ),
+    st.Page(
+        "pages/6_entity_catalog.py",
+        title="개체명목록",
+        icon="5️⃣",
+    )
 ]
 
 # 왼쪽 사이드바 메뉴 구성

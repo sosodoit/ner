@@ -11,109 +11,12 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.config.postgredb import get_postgre_connect
-from src.ner_review_app.modules.review_targets import HUMAN_REVIEW_METHOD, METHOD_DISPLAY_NAMES, REVIEW_SCOPE_CTES
+from src.ner_review_app.modules.review_targets import METHOD_DISPLAY_NAMES
+from src.ner_review_app.modules.review_statistics import load_review_data, refresh_dashboard
+from src.ner_review_app.modules.review_rows import load_review_rows
 
 METHOD_ORDER = ["일괄처리", "LLM검수", "휴먼검수"]
 ASSIGNMENT_PASSWORD_ENV = "NER_ASSIGNMENT_PASSWORD"
-
-
-def _fetch_dataframe(cursor, query, params=None):
-    cursor.execute(query, params)
-    rows = cursor.fetchall()
-    columns = [column.name for column in cursor.description]
-    return pd.DataFrame(rows, columns=columns)
-
-
-@st.cache_data(ttl=3600, show_spinner=False)
-def load_original_counts():
-    with get_postgre_connect() as connection, connection.cursor() as cursor:
-        return _fetch_dataframe(cursor, """
-            SELECT publisher AS press, COUNT(DISTINCT doc_id) AS original_count
-            FROM public.ner_documents GROUP BY publisher
-        """)
-
-
-def load_review_data():
-    method_query = f"""
-        WITH {REVIEW_SCOPE_CTES}, method_articles AS (
-            SELECT s.press, s.doc_id, s.review_method, a.article_result,
-                   BOOL_AND(s.review_status = '완료') FILTER (
-                       WHERE s.review_method <> 'LLM검수' OR s.sentence_result = 'error'
-                   ) AS completed,
-                   COUNT(DISTINCT s.sentence_id) FILTER (WHERE s.sentence_result = 'error') AS error_sentences
-            FROM review_sentences s
-            LEFT JOIN human_articles a ON a.press = s.press AND a.doc_id = s.doc_id
-                                      AND s.review_method = 'LLM검수'
-            GROUP BY s.press, s.doc_id, s.review_method, a.article_result
-        ), rule_counts AS (
-            SELECT press, COUNT(DISTINCT doc_id) FILTER (WHERE rule_detected) AS rule_count
-            FROM review_sentences GROUP BY press
-        )
-        SELECT press, review_method, rule_count, COUNT(*) AS assigned_count,
-               COUNT(*) FILTER (WHERE article_result = 'error') AS error_count,
-               COUNT(*) FILTER (WHERE article_result = 'normal') AS normal_count,
-               COUNT(*) FILTER (WHERE completed IS NOT NULL) AS target_count,
-               COUNT(*) FILTER (WHERE completed) AS completed_count,
-               SUM(error_sentences)::bigint AS error_sentences
-        FROM method_articles JOIN rule_counts USING (press)
-        GROUP BY press, review_method, rule_count ORDER BY press, review_method
-    """
-    # 원천 개체 오류에서 출발하는 역방향 집계로 대상 누락, 중복, 부분 완료 오집계를 확인한다.
-    check_query = """
-        WITH judged AS (
-            SELECT h.press, h.doc_id, BOOL_OR(v.review_status = 'error') AS has_error,
-                   BOOL_AND(h.review_status = '완료') FILTER (WHERE v.review_status = 'error') AS completed,
-                   COUNT(DISTINCT h.sentence_id) FILTER (WHERE v.review_status = 'error') AS error_sentences
-            FROM public.ner_reviews v JOIN public.ner_runs run USING (run_id)
-            JOIN public.ner_human_review h
-              ON h.data_version = run.data_version AND h.press = SPLIT_PART(v.run_id, '_', 7)
-             AND h.doc_id = v.doc_id AND h.sentence_id = v.sentence_id
-            WHERE v.entity_id IS NOT NULL AND v.review_status IN ('error', 'normal') AND h.review_method = %s
-            GROUP BY h.press, h.doc_id
-        )
-        SELECT press, COUNT(*) FILTER (WHERE has_error) AS error_count,
-               COUNT(*) FILTER (WHERE NOT has_error) AS normal_count,
-               COUNT(*) FILTER (WHERE completed) AS completed_count, SUM(error_sentences) AS error_sentences
-        FROM judged GROUP BY press
-    """
-    assignment_query = """
-        SELECT
-            COALESCE(press, '미상') AS press,
-            COALESCE(NULLIF(BTRIM(assignee), ''), '미배정') AS assignee,
-            review_method,
-            COUNT(DISTINCT (data_version, doc_id))::BIGINT AS article_count
-        FROM ner_human_review
-        GROUP BY
-            COALESCE(press, '미상'),
-            COALESCE(NULLIF(BTRIM(assignee), ''), '미배정'),
-            review_method
-        ORDER BY press, assignee, review_method
-    """
-
-    with get_postgre_connect() as connection:
-        with connection.cursor() as cursor:
-            cursor.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
-            methods = _fetch_dataframe(cursor, method_query, (None, None, None))
-            expected = _fetch_dataframe(cursor, check_query, (HUMAN_REVIEW_METHOD,))
-            assignments = _fetch_dataframe(cursor, assignment_query)
-
-    human = methods[methods["review_method"] == HUMAN_REVIEW_METHOD].set_index("press")
-    expected = expected.set_index("press").sort_index()
-    actual = human.loc[human["error_count"] + human["normal_count"] > 0, expected.columns]
-    if not actual.sort_index().astype("int64").equals(expected.astype("int64")):
-        raise ValueError("언론사별 오류·정상·완료 기사 수 또는 오류 문장 수가 원천 판정과 다릅니다.")
-
-    summary = load_original_counts().set_index("press")
-    summary = summary.join(methods.groupby("press")["rule_count"].max(), how="outer")
-    for method, column in (("일괄처리", "batch_count"), ("휴먼검수", "martial_count")):
-        counts = methods.loc[methods["review_method"] == method].set_index("press")["assigned_count"]
-        summary[column] = counts
-    summary = summary.join(human[["assigned_count", "error_count", "normal_count", "completed_count"]])
-    summary = summary.fillna(0).astype("int64")
-    summary["judged_count"] = summary["normal_count"] + summary["error_count"]
-    summary["pending_count"] = summary["assigned_count"] - summary["judged_count"]
-    summary["incomplete_count"] = summary["error_count"] - summary["completed_count"]
-    return {"summary": summary.sort_index().reset_index(), "methods": methods, "assignments": assignments}
 
 
 def assign_articles(press, review_method, assignee, article_count, password):
@@ -167,41 +70,43 @@ def render_review_statistics(data):
     with st.container(border=True):
         title_col, refresh_col = st.columns([10, 0.5], vertical_alignment="center")
         title_col.markdown("**NER 검수 현황**")
-        refresh_col.button("", icon=":material/refresh:", help="최신 검수 현황 조회", type="tertiary")
+        refresh_col.button("", icon=":material/refresh:", help="원본·검수 현황 다시 조회",
+                           type="tertiary", on_click=refresh_dashboard)
+        st.caption("검수 현황은 최대 15분간 재사용합니다. 새로고침을 누르면 현재 DB에서 다시 조회합니다.")
         st.caption("원본은 언론사별 고유 기사 수입니다.")
-        st.caption("최종 휴먼검수는 `계엄기사`, LLM검출건 중 `오류` 기사입니다.")
-        st.caption("개체 오류가 하나라도 있으면 오류 문장입니다. 오류 문장이 있는 기사는 오류로, 정상 판정만 있는 기사는 정상으로 한 번 셉니다. "
-                   "오류 문장을 모두 완료하면 해당 기사의 휴먼검수가 완료됩니다.")
+        st.caption("최종 휴먼검수는 계엄기사·일괄처리·휴먼검수 최종 오류 기사 수의 합계이며, 완료율 계산의 기준입니다.")
+        st.caption("룰 검출 기사 중 휴먼검수 대상 문장에 개체 오류가 하나라도 있으면 최종 오류, 나머지는 최종 정상입니다. "
+                   "개체 판정이 없는 기사도 최종 정상에 포함합니다. 직접 검수는 대상 오류 문장을 모두 완료하면 완료로 셉니다.")
 
     tab1, tab2, tab3 = st.tabs(["언론사별 검수 현황", "언론사별 검수 방식", "담당자 배정"])
     with tab1:
+        st.caption("완료율은 계엄기사·일괄처리·최종 오류의 완료 기사 수를 세 방식의 검수 대상 기사 수로 나눈 값입니다.")
         count_labels = {
             "original_count": "원본기사", "martial_count": "계엄기사", "batch_count": "일괄처리",
-            "rule_count": "룰검출", "judged_count": "LLM검출", "error_count": "오류", 
-            "completed_count": "검수 완료", "incomplete_count": "검수 미완료",
+            "rule_count": "룰 검출 전체", "rule_error_count": "최종 오류", "rule_normal_count": "최종 정상",
+            "target_count": "검수 대상", "completed_count": "검수 완료", "incomplete_count": "검수 미완료",
         }
         totals = summary[list(count_labels)].sum().to_dict()
         display = pd.concat([pd.DataFrame([{"press": "전체 합계", **totals}]), summary], ignore_index=True)
-        display["완료율"] = (display["completed_count"].div(display["error_count"].replace(0, float("nan"))).fillna(0).mul(100).round(1))
+        display["완료율"] = (display["completed_count"].div(display["target_count"].replace(0, float("nan"))).fillna(0).mul(100).round(1))
         display = display[["press", *count_labels, "완료율"]].rename(columns={"press": "언론사", **count_labels})
         st.dataframe(display, width="stretch", hide_index=True, height=(len(display) + 1) * 35 + 3,
                      column_config={"완료율": st.column_config.ProgressColumn(min_value=0, max_value=100, format="%.1f%%")})
 
     with tab2:
         for row in summary.itertuples(index=False):
-            with st.expander(f"{row.press} · 원본 {row.original_count:,}기사 · 최종 휴먼검수 {row.error_count:,}기사"):
-                values = methods.loc[methods["press"] == row.press].set_index("review_method")
-                values = values.reindex(METHOD_ORDER, fill_value=0)[["assigned_count", "target_count", "completed_count"]]
+            values = methods.loc[methods["press"] == row.press].set_index("review_method")
+            values = values.reindex(METHOD_ORDER, fill_value=0)[["assigned_count", "target_count", "completed_count"]]
+            with st.expander(f"{row.press} · 원본 {row.original_count:,}기사 · 최종 휴먼검수 {row.target_count:,}기사"):
                 values["미완료 기사"] = values["target_count"] - values["completed_count"]
                 values["완료율"] = values["completed_count"].div(values["target_count"].replace(0, float("nan"))).fillna(0).mul(100)
                 values.index = values.index.map(METHOD_DISPLAY_NAMES).rename("검수 방식")
                 st.dataframe(values.reset_index().rename(columns={
-                    "assigned_count": "분류 기사", "target_count": "실제 검수 대상", "completed_count": "완료 기사",
+                    "assigned_count": "분류 기사(배정)", "target_count": "검수 대상", "completed_count": "완료 기사",
                 }), width="stretch", hide_index=True, column_config={
                     "완료율": st.column_config.ProgressColumn(min_value=0, max_value=100, format="%.1f%%")
                 })
-                st.caption(f"휴먼검수 분류 {row.assigned_count:,}기사 중 판정 있음 {row.judged_count:,}기사 "
-                           f"(오류 {row.error_count:,} · 정상 {row.normal_count:,}), 판정 없음 {row.pending_count:,}기사")
+                st.caption(f"휴먼검수 판정 전체(룰 검출) {row.rule_count:,}기사 · 최종 오류 {row.rule_error_count:,}기사 · 최종 정상 {row.rule_normal_count:,}기사")
 
     with tab3:
         #---------------------------------------------------------------------------------------------------------
@@ -325,7 +230,8 @@ def render_review_statistics(data):
                             assignment_password,
                         )
                         if success:
-                            st.cache_data.clear()
+                            load_review_data.clear()
+                            load_review_rows.clear()
                             st.success(message)
                             st.rerun()
                         else:
