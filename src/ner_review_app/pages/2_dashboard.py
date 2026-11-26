@@ -15,7 +15,7 @@ from src.ner_review_app.modules.review_targets import METHOD_DISPLAY_NAMES
 from src.ner_review_app.modules.review_statistics import load_review_data, refresh_dashboard
 from src.ner_review_app.modules.review_rows import load_review_rows
 
-METHOD_ORDER = ["일괄처리", "LLM검수", "휴먼검수"]
+METHOD_ORDER = ["일괄처리", "휴먼검수", "LLM검수"]
 ASSIGNMENT_PASSWORD_ENV = "NER_ASSIGNMENT_PASSWORD"
 
 
@@ -70,9 +70,8 @@ def render_review_statistics(data):
     with st.container(border=True):
         title_col, refresh_col = st.columns([10, 0.5], vertical_alignment="center")
         title_col.markdown("**NER 검수 현황**")
-        refresh_col.button("", icon=":material/refresh:", help="원본·검수 현황 다시 조회",
-                           type="tertiary", on_click=refresh_dashboard)
-        st.caption("검수 현황은 최대 15분간 재사용합니다. 새로고침을 누르면 현재 DB에서 다시 조회합니다.")
+        refresh_col.button("", icon=":material/refresh:", help="원본·검수 현황 다시 조회", type="tertiary", on_click=refresh_dashboard)
+        st.caption("검수 현황은 최대 15분간 재사용합니다. 새로고침을 누르면 최신 데이터로 다시 조회합니다.")
         st.caption("원본은 언론사별 고유 기사 수입니다.")
         st.caption("최종 휴먼검수는 계엄기사·일괄처리·휴먼검수 최종 오류 기사 수의 합계이며, 완료율 계산의 기준입니다.")
         st.caption("룰 검출 기사 중 휴먼검수 대상 문장에 개체 오류가 하나라도 있으면 최종 오류, 나머지는 최종 정상입니다. "
@@ -80,9 +79,8 @@ def render_review_statistics(data):
 
     tab1, tab2, tab3 = st.tabs(["언론사별 검수 현황", "언론사별 검수 방식", "담당자 배정"])
     with tab1:
-        st.caption("완료율은 계엄기사·일괄처리·최종 오류의 완료 기사 수를 세 방식의 검수 대상 기사 수로 나눈 값입니다.")
         count_labels = {
-            "original_count": "원본기사", "martial_count": "계엄기사", "batch_count": "일괄처리", "rule_error_count": "휴먼검수",
+            "original_count": "원본기사", "batch_count": "일괄처리", "martial_count": "계엄기사", "rule_error_count": "휴먼검수",
             "target_count": "전체검수대상", "completed_count": "전체검수완료", "incomplete_count": "전체검수미완료",
         }
         totals = summary[list(count_labels)].sum().to_dict()
@@ -97,6 +95,7 @@ def render_review_statistics(data):
             values = methods.loc[methods["press"] == row.press].set_index("review_method")
             values = values.reindex(METHOD_ORDER, fill_value=0)[["assigned_count", "target_count", "completed_count"]]
             llm_target_count = int(values.loc["LLM검수", "assigned_count"])
+            
             with st.expander(f"{row.press} · 원본 {row.original_count:,}기사 · 최종휴먼검수 {row.target_count:,}기사"):
                 values["미완료 기사"] = values["target_count"] - values["completed_count"]
                 values["완료율"] = values["completed_count"].div(values["target_count"].replace(0, float("nan"))).fillna(0).mul(100)
@@ -106,12 +105,12 @@ def render_review_statistics(data):
                 }), width="stretch", hide_index=True, column_config={
                     "완료율": st.column_config.ProgressColumn(min_value=0, max_value=100, format="%.1f%%")
                 })
+                st.caption(f"휴먼검수 검수대상 {llm_target_count:,} = 룰검출전체 {row.rule_count:,}기사 - 오탐 {row.rule_count - llm_target_count:,}기사")
                 st.caption(
-                    f"룰검출전체 {row.rule_count:,}기사 − 1차정제 제외 {row.rule_count - llm_target_count:,}기사 "
-                    f"= LLM검수대상 {llm_target_count:,}기사(휴먼검수 행의 검수대상)입니다. "
-                    "LLM 판정 후 오류로 남은 기사가 휴먼검수의 최종검수대상입니다."
+                    f"룰 검출 전체 {row.rule_count:,}기사 = 오류 {row.rule_error_count:,}기사 "
+                    f"+ 정상 {llm_target_count - row.rule_error_count:,}기사 "
+                    f"+ 오탐 {row.rule_count - llm_target_count:,}기사"
                 )
-                st.caption(f"룰검출전체 {row.rule_count:,}기사 = 최종오류 {row.rule_error_count:,}기사 + 최종정상 {row.rule_normal_count:,}기사")
 
     with tab3:
         #---------------------------------------------------------------------------------------------------------

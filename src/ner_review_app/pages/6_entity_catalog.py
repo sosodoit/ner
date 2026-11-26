@@ -69,15 +69,14 @@ if not ready:
 catalog_tab, refresh_tab = st.tabs(["개체명 조회", "수정완료 기사 재집계"])
 
 with catalog_tab:
-    exact_name = st.text_input("개체명 정확히 검색", placeholder="비워 두면 출현빈도 순으로 표시")
-    if st.session_state.get("catalog_search") != exact_name:
-        st.session_state["catalog_search"] = exact_name
+    entity_search = st.text_input("개체명·분류 검색", placeholder="개체명 또는 분류의 일부 입력").strip()
+    if st.session_state.get("catalog_search") != entity_search:
+        st.session_state["catalog_search"] = entity_search
         st.session_state["catalog_page_starts"] = [None]
     starts = st.session_state["catalog_page_starts"]
     try:
-        rows = load_catalog_page(starts[-1], exact_name, 51)
+        rows = load_catalog_page(starts[-1], entity_search, 51)
         visible = rows[:50]
-        st.caption(f"{len(starts)}페이지 · 현재 {len(visible)}개 개체명·분류")
         st.dataframe(
             pd.DataFrame(visible).rename(columns={
                 "entity_name": "개체명", "entity_type": "분류", "mention_count": "출현빈도",
@@ -85,15 +84,14 @@ with catalog_tab:
             hide_index=True,
             width="stretch",
         )
-        if not exact_name:
-            previous, following = st.columns(2)
-            if previous.button("이전", key="catalog_previous", disabled=len(starts) == 1):
-                starts.pop()
-                st.rerun()
-            if following.button("다음", key="catalog_next", disabled=len(rows) <= 50):
-                last = visible[-1]
-                starts.append((last["mention_count"], last["entity_name"], last["entity_type"]))
-                st.rerun()
+        previous, following = st.columns(2)
+        if previous.button("이전", key="catalog_previous", disabled=len(starts) == 1):
+            starts.pop()
+            st.rerun()
+        if following.button("다음", key="catalog_next", disabled=len(rows) <= 50):
+            last = visible[-1]
+            starts.append((last["mention_count"], last["entity_name"], last["entity_type"]))
+            st.rerun()
 
         if visible:
             selected = st.selectbox(

@@ -10,7 +10,11 @@ from src.ner_review_app.modules.postgredb import get_postgre_connect
 from src.ner_review_app.modules.review_targets import HUMAN_REVIEW_METHOD, METHOD_DISPLAY_NAMES, REVIEW_SCOPE_CTES
 from src.ner_review_app.modules.review_statistics import load_review_data
 from src.ner_review_app.modules.review_rows import load_review_rows
-from src.ner_review_app.modules.entity_catalog import catalog_ready
+from src.ner_review_app.modules.entity_catalog import entity_search_pattern
+from src.ner_review_app.modules.entity_filter import ENTITY_PAGE_SIZE, render_entity_filter
+from src.ner_review_app.pages._article_list_state import (
+    get_article_list_state, remember_article_filters, render_article_selector,
+)
 
 RULES_BY_TYPE = {
     "EXT_S003": ["EXT_S003"],
@@ -145,7 +149,6 @@ RULE_NAMES = {
 
 ERROR_TYPES = tuple(ERROR_TYPE_NAMES)
 PAGE_SIZE = 10
-ENTITY_PAGE_SIZE = 30
 TAGGED_ENTITY_PATTERN = re.compile(r"<\s*([^<>:]+?)\s*:\s*([^<>]+?)\s*>")
 REVIEWER_CREDENTIAL_ENV_PREFIX = "NER_REVIEWER_"
 REVIEWER_QUERY_PARAM = "reviewer"
@@ -413,6 +416,7 @@ def save_review_page(review_updates, assignee, status_changed=True):
     load_review_rows.clear()
     if status_changed:
         load_review_data.clear()
+        fetch_review_entities.clear()
 
 
 def save_review_item(item, assignee, modified_form, review_status):
@@ -687,6 +691,7 @@ def review_list_ctes(
     search_text="",
     response_review_needed="전체",
     response_review_status="전체",
+    completion_status="전체",
 ):
     """기사 목록과 개체 선택 목록에 동일한 배정·검수 조건을 적용한다."""
     result_filter = response_review_status if response_review_status in ("error", "normal") else "전체"
@@ -705,8 +710,13 @@ def review_list_ctes(
         category.append("s.review_method = %s")
         params.append(review_method)
 
+    # 검색·오류유형·개체 필터로 숨겨진 문장까지 포함해 기사 완료 여부를 판단한다.
+    params.append(assignee)
     filters = ["s.assignee = %s"]
     params.append(assignee)
+    if completion_status != "전체":
+        filters.append("a.article_completed = %s")
+        params.append(completion_status == "완료")
     if search_text.strip():
         filters.append("(s.doc_id ILIKE %s OR s.sentence_id ILIKE %s)")
         params.extend([f"%{search_text.strip()}%"] * 2)
@@ -725,8 +735,15 @@ def review_list_ctes(
             LEFT JOIN human_articles a ON a.press = s.press AND a.doc_id = s.doc_id
                                       AND s.review_method = 'LLM검수'
             WHERE {" AND ".join(category) or "TRUE"}
+        ), assigned_article_status AS (
+            SELECT press, doc_id,
+                   BOOL_AND(review_status IS NOT DISTINCT FROM '완료') AS article_completed
+            FROM eligible WHERE assignee = %s
+            GROUP BY press, doc_id
         ), filtered AS (
-            SELECT s.* FROM eligible s WHERE {" AND ".join(filters)}
+            SELECT s.*, a.article_completed FROM eligible s
+            JOIN assigned_article_status a USING (press, doc_id)
+            WHERE {" AND ".join(filters)}
         )
     """
     return query, params
@@ -736,18 +753,20 @@ def review_list_ctes(
 def fetch_review_entities(
     selected_press, data_versions, selected_types, review_method, assignee,
     search_text, response_review_needed, response_review_status,
-    exact_name="", frequent_first=True, after=None,
+    completion_status="전체",
+    entity_search="", frequent_first=True, after=None,
 ):
     """전체 빈도를 재집계하지 않고 내 검수대상에 출현하는 개체 쌍을 30개씩 찾는다."""
     scope_ctes, params = review_list_ctes(
         selected_press, data_versions, selected_types, review_method, assignee,
         search_text, response_review_needed, response_review_status,
+        completion_status,
     )
     conditions = []
     location_condition = "TRUE"
-    if exact_name:
-        location_condition = "l.entity_name = %s"
-        params.append(exact_name)
+    if entity_search.strip():
+        location_condition = "(l.entity_name ILIKE %s OR l.entity_type ILIKE %s)"
+        params.extend([entity_search_pattern(entity_search)] * 2)
     direction = "DESC" if frequent_first else "ASC"
     if after is not None:
         comparison = "<" if frequent_first else ">"
@@ -778,103 +797,26 @@ def fetch_review_entities(
             ).fetchall()
 
 
-def select_review_entity(scope_args):
-    """목록 탐색과 적용을 분리해 다음 개체 페이지로 이동해도 검수 범위를 유지한다."""
-    if st.session_state.get("review_entity_scope") != scope_args:
-        st.session_state["review_entity_scope"] = scope_args
-        st.session_state["review_entity_selected"] = None
-        st.session_state["review_entity_starts"] = [None]
-    if not st.sidebar.checkbox("개체명 목록 기준 검수", key="review_entity_enabled"):
-        return None
-    
-    with st.sidebar:
-        with st.form("review_entity_search"):
-            exact_name = st.text_input("개체명 정확히 검색", key="review_entity_name").strip()
-            order = st.radio("출현빈도정렬", ["많은 순", "적은 순"], horizontal=True, key="review_entity_order")
-            st.form_submit_button("개체 목록 조회", use_container_width=True)
-        search_key = (exact_name, order)
-        if st.session_state.get("review_entity_search_key") != search_key:
-            st.session_state["review_entity_search_key"] = search_key
-            st.session_state["review_entity_starts"] = [None]
-        starts = st.session_state["review_entity_starts"]
-        try:
-            if not catalog_ready():
-                st.info("개체명목록 화면에서 초기 준비를 완료한 뒤 사용할 수 있습니다.")
-            else:
-                rows = fetch_review_entities(*scope_args, exact_name, order == "많은 순", starts[-1])
-                visible = rows[:ENTITY_PAGE_SIZE]
-                st.caption(f"개체 목록 {len(starts)}페이지 · {len(visible)}개 표시")
-                if visible:
-                    entities = {(row["entity_name"], row["entity_type"]): row for row in visible}
-                    choice_key = "review_entity_choice_" + hashlib.md5(repr((scope_args, search_key, starts[-1])).encode("utf-8")).hexdigest()
-                    choice = st.selectbox(
-                        "검수할 개체명·분류", list(entities), key=choice_key,
-                        format_func=lambda pair: f"{pair[0]} · {pair[1]} · 전체 {entities[pair]['mention_count']:,}회",
-                    )
-                    if st.button("선택 개체로 조회", key="review_entity_apply"):
-                        st.session_state["review_entity_selected"] = entities[choice]
-                else:
-                    st.info("조건에 해당하는 개체가 없습니다.")
-                previous, following = st.columns(2)
-                if previous.button("개체 이전", disabled=len(starts) == 1):
-                    starts.pop()
-                    st.rerun()
-                if following.button("개체 다음", disabled=len(rows) <= ENTITY_PAGE_SIZE):
-                    last = visible[-1]
-                    starts.append((last["mention_count"], last["entity_name"], last["entity_type"]))
-                    st.rerun()
-        except Exception:
-            st.warning("개체 목록을 조회하지 못했습니다. 검색 범위를 줄이거나 개체명목록의 준비 상태를 확인해 주세요.")
-
-        selected = st.session_state["review_entity_selected"]
-        if selected:
-            st.caption(f"적용 중: {selected['entity_name']} · {selected['entity_type']} · 전체 {selected['mention_count']:,}회")
-            if st.button("개체 선택 해제", key="review_entity_clear"):
-                st.session_state["review_entity_selected"] = None
-                st.rerun()
-            # st.caption("적용 중인 개체가 없습니다. 전체 개체의 검수 기사를 표시합니다.")
-        # st.caption("수정 결과는 개체명목록에서 재집계한 뒤 반영되며, 목록은 최대 15분간 재사용합니다.")
-    
-    st.markdown("""
-        <style>
-        /* 검색 입력창과 조회 버튼의 테두리 및 크기 통일 */
-        [data-testid="stSidebar"] [data-testid="stTextInput"] [data-baseweb="input"],
-        [data-testid="stSidebar"] [data-testid="stFormSubmitButton"] button {
-            height: 44px;
-            min-height: 44px;
-            border: 1px solid #c5c8ce;
-            border-radius: 8px;
-            box-sizing: border-box;
-        }
-        /* 라디오 버튼 선택지 좌우 간격 */
-        [data-testid="stSidebar"] [data-testid="stRadio"] [role="radiogroup"] {
-            column-gap: 24px;
-        }
-
-        /* 출현빈도 정렬 라벨과 라디오 버튼 간격 */
-        [data-testid="stSidebar"] [data-testid="stRadio"] {
-            gap: 12px;
-        }
-        /* 라디오 버튼과 목록 조회 버튼 사이 간격 */
-        [data-testid="stSidebar"] [data-testid="stFormSubmitButton"] {
-            padding-top: 12px;
-        }
-        </style>
-        """, unsafe_allow_html=True)
-    
-    return st.session_state["review_entity_selected"]
+def select_review_entity(scope_args, key_prefix):
+    return render_entity_filter(
+        scope_args,
+        lambda term, frequent_first, after: fetch_review_entities(*scope_args, term, frequent_first, after),
+        key_prefix,
+    )
 
 
 def fetch_rule_results(
     selected_press, data_versions, selected_types, limit, offset,
     review_method=None, assignee=None, search_text="",
     response_review_needed="전체", response_review_status="전체", selected_entity=None,
+    completion_status="전체",
 ):
     """개체 선택은 기사에만 적용하고 해당 기사의 다른 검수대상 문장도 유지한다."""
     selected_rules = rules_for_error_types(selected_types)
     scope_ctes, params = review_list_ctes(
         selected_press, data_versions, selected_types, review_method, assignee,
         search_text, response_review_needed, response_review_status,
+        completion_status,
     )
     entity_condition = "TRUE"
     if selected_entity is not None:
@@ -1315,6 +1257,16 @@ authenticated_assignee = authenticate_reviewer()
 show_detailed_review = authenticated_assignee == "김소희"
 ner_header_placeholder = st.empty()
 page_review_method = globals().get("REVIEW_PAGE_METHOD", HUMAN_REVIEW_METHOD)
+article_state = get_article_list_state(("review", page_review_method, authenticated_assignee))
+filter_prefix = "review_" + hashlib.md5(
+    repr((page_review_method, authenticated_assignee)).encode("utf-8")
+).hexdigest()
+press_widget_key = f"{filter_prefix}_press"
+search_widget_key = f"{filter_prefix}_search"
+response_status_widget_key = f"{filter_prefix}_response_status"
+completion_widget_key = f"{filter_prefix}_completion"
+error_type_prefix = f"{filter_prefix}_error_type"
+entity_filter_prefix = f"{filter_prefix}_entity"
 
 try:
     requested_press = st.query_params.get("press")
@@ -1392,26 +1344,26 @@ def multi_select_filter(label, options, default, format_func, key):
 # -----------------------------------------------------------------------------
 press_options = sorted(press_versions)
 if requested_press in press_options:
-    st.session_state.selected_press = requested_press
-elif st.session_state.get("selected_press") not in press_options:
-    st.session_state.selected_press = press_options[0]
+    st.session_state[press_widget_key] = requested_press
+elif st.session_state.get(press_widget_key) not in press_options:
+    st.session_state[press_widget_key] = press_options[0]
 
 search_text = st.sidebar.text_input(
     "기사ID 또는 문장ID 검색",
-    key="review_search_text",
+    key=search_widget_key,
     placeholder="기사ID 또는 문장ID 검색",
     label_visibility="collapsed"
 ).strip()
 
-with st.sidebar.popover(f"언론사 ({st.session_state.selected_press})", width="stretch"):
+with st.sidebar.popover(f"언론사 ({st.session_state[press_widget_key]})", width="stretch"):
     selected_press = st.radio(
         "언론사 선택",
         press_options,
-        key="selected_press",
+        key=press_widget_key,
         label_visibility="collapsed",
     )
 
-selected_press = st.session_state.selected_press
+selected_press = st.session_state[press_widget_key]
 
 selected_review_method = page_review_method
 selected_review_method_display = METHOD_DISPLAY_NAMES[selected_review_method]
@@ -1425,34 +1377,48 @@ if selected_review_method == HUMAN_REVIEW_METHOD:
         "error": "오류",
         "final_normal": "정상",
     }
-    if st.session_state.get("response_review_status") not in status_labels:
-        st.session_state.response_review_status = "전체"
-    response_status_label = status_labels[st.session_state.response_review_status]
+    if st.session_state.get(response_status_widget_key) not in status_labels:
+        st.session_state[response_status_widget_key] = "전체"
+    response_status_label = status_labels[st.session_state[response_status_widget_key]]
     with st.sidebar.popover(f"검수결과 ({response_status_label})", width="stretch"):
         response_review_status = st.radio(
             "검수판정",
             list(status_labels),
             format_func=status_labels.get,
-            key="response_review_status",
+            key=response_status_widget_key,
             label_visibility="collapsed",
         )
     scope_label = f"{selected_review_method_display} · {status_labels[response_review_status]}"
 
+completion_options = ["전체", "미완료", "완료"]
+if st.session_state.get(completion_widget_key) not in completion_options:
+    st.session_state[completion_widget_key] = "전체"
+with st.sidebar.popover(f"검수 상태 ({st.session_state[completion_widget_key]})", width="stretch"):
+    completion_status = st.radio(
+        "검수 상태 선택", completion_options, key=completion_widget_key,
+        label_visibility="collapsed",
+    )
+
 filter_by_type = selected_review_method in (HUMAN_REVIEW_METHOD, BATCH_REVIEW_METHOD)
 selected_types = ERROR_TYPES
 if filter_by_type:
-    selected_types = multi_select_filter("오류유형", ERROR_TYPES, ERROR_TYPES, ERROR_TYPE_NAMES.get, "selected_error_type")
+    selected_types = multi_select_filter("오류유형", ERROR_TYPES, ERROR_TYPES, ERROR_TYPE_NAMES.get, error_type_prefix)
 selected_rules = rules_for_error_types(selected_types)
 
 priority_entity = select_review_entity((
     selected_press, tuple(press_versions[selected_press]), selected_types,
     selected_review_method, authenticated_assignee, search_text,
-    response_review_needed, response_review_status,
-))
+    response_review_needed, response_review_status, completion_status,
+), entity_filter_prefix)
 selected_entity = (
     (priority_entity["entity_name"], priority_entity["entity_type"])
     if priority_entity else None
 )
+remember_article_filters(article_state, [
+    press_widget_key, search_widget_key, response_status_widget_key, completion_widget_key,
+    *(f"{error_type_prefix}_{error_type}" for error_type in ERROR_TYPES),
+    *(f"{entity_filter_prefix}_{suffix}" for suffix in ("enabled", "name", "order")),
+])
 
 with ner_header_placeholder.container(border=False):
     selected_type_names = [
@@ -1507,6 +1473,7 @@ with ner_header_placeholder.container(border=False):
         )
 
 filter_key = (
+    authenticated_assignee,
     selected_press,
     selected_review_method_display,
     selected_types,
@@ -1515,13 +1482,12 @@ filter_key = (
     response_review_needed,
     response_review_status,
     selected_entity,
+    completion_status,
 )
 
-if st.session_state.get("rule_filter_key") != filter_key:
-    st.session_state["rule_filter_key"] = filter_key
-    st.session_state["rule_offset"] = 0
-
-offset = st.session_state.get("rule_offset", 0)
+st.session_state["rule_filter_key"] = filter_key
+position = article_state["positions"].setdefault(filter_key, {"offset": 0})
+offset = position["offset"]
 st.sidebar.markdown(
     """
     <style>
@@ -1606,6 +1572,7 @@ try:
         response_review_needed,
         response_review_status,
         selected_entity,
+        completion_status,
     )
 except Exception as exc:
     st.error(f"검수 기사 조회 실패: {exc}")
@@ -1625,7 +1592,7 @@ for version, doc_id in sorted(docs):
 page_doc_ids = sorted(versions_by_doc, key=document_sort_key)
 has_next = offset + len(page_doc_ids) < filtered_article_count
 if offset and not page_doc_ids:
-    st.session_state["rule_offset"] = 0
+    position["offset"] = max(0, (filtered_article_count - 1) // PAGE_SIZE * PAGE_SIZE)
     st.rerun()
 
 # 현재 페이지에 실제 표시되는 문장의 임시 검수 상태와 수정문을 초기화한다.
@@ -1663,9 +1630,10 @@ all_page_completed = bool(page_sentence_keys) and all(
 #     st.sidebar.caption(f"{selected_press} · {scope_label} {press_article_count:,}기사")
 st.sidebar.markdown(f"**내 검수 기사 목록 · {filtered_article_count:,}기사**")
 st.sidebar.caption("내 배정 기사에 선택한 조건과 검색어를 적용한 건수입니다.")
+st.sidebar.caption("기사의 검수 대상 문장을 모두 저장 완료하면 완료로 분류합니다.")
 
 if page_doc_ids:
-    selection_key = "selected_doc_" + hashlib.md5(f"{filter_key}|{offset}".encode("utf-8")).hexdigest()
+    selection_key = filter_prefix + "_doc_" + hashlib.md5(f"{filter_key}|{offset}".encode("utf-8")).hexdigest()
 
     # doc_captions = []
     # for doc_id in page_doc_ids:
@@ -1683,20 +1651,24 @@ if page_doc_ids:
     #                 labels.add("룰 검출")
     #     doc_captions.append(" / ".join(sorted(labels)))
 
-    selected_id = st.sidebar.radio(
-        "기사 선택",
-        page_doc_ids,
-        key=selection_key,
-        label_visibility="collapsed",
-        # captions=doc_captions,
-    )
+    with st.sidebar:
+        selected_id = render_article_selector(page_doc_ids, position, offset, selection_key)
     versions = versions_by_doc[selected_id]
-    selected_version = st.sidebar.selectbox("데이터 버전", versions) if len(versions) > 1 else versions[0]
+    saved_versions = position.setdefault("versions", {})
+    if len(versions) > 1:
+        version_key = f"{selection_key}_version_{selected_id}"
+        if st.session_state.get(version_key) not in versions:
+            saved_version = saved_versions.get(selected_id)
+            st.session_state[version_key] = saved_version if saved_version in versions else versions[0]
+        selected_version = st.sidebar.selectbox("데이터 버전", versions, key=version_key)
+    else:
+        selected_version = versions[0]
+    saved_versions[selected_id] = selected_version
     selected_doc_key = (selected_version, selected_id)
 else:
     selected_doc_key = None
     # st.sidebar.info("조건에 해당하는 기사가 없습니다.")
-    st.info("현재 담당자에게 배정된 기사가 없습니다.")
+    st.info("현재 조회 조건에 맞는 배정 기사가 없습니다.")
 
 # 페이지 이동 영역
 st.sidebar.markdown(
@@ -1748,9 +1720,7 @@ with prev_col:
         width="stretch",
         help="이전 페이지",
         key="previous_doc_page",
-        on_click=lambda: st.session_state.update(
-            rule_offset=max(0, offset - PAGE_SIZE)
-        ),
+        on_click=lambda: position.update(offset=max(0, offset - PAGE_SIZE)),
     )
 
 with page_col:
@@ -1777,9 +1747,7 @@ with next_col:
         width="stretch",
         help="다음 페이지",
         key="next_doc_page",
-        on_click=lambda: st.session_state.update(
-            rule_offset=offset + PAGE_SIZE
-        ),
+        on_click=lambda: position.update(offset=offset + PAGE_SIZE),
     )
 
 # -----------------------------------------------------------------------------

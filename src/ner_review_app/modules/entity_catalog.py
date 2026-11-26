@@ -128,27 +128,31 @@ def prepare_catalog(password):
             conn.execute(statement)
 
 
-def load_catalog_page(after=None, exact_name="", limit=50):
+def entity_search_pattern(value):
+    """LIKE의 특수문자도 검색어 자체로 취급한다."""
+    value = value.strip().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return f"%{value}%"
+
+
+def load_catalog_page(after=None, search_text="", limit=50):
+    conditions = []
+    params = []
+    if search_text.strip():
+        conditions.append("(entity_name ILIKE %s OR entity_type ILIKE %s)")
+        params.extend([entity_search_pattern(search_text)] * 2)
+    if after is not None:
+        conditions.append("(mention_count, entity_name, entity_type) < (%s, %s, %s)")
+        params.extend(after)
+    params.append(limit)
     with get_postgre_connect() as conn:
         with conn.cursor() as cursor:
             cursor.execute("SET TRANSACTION READ ONLY")
-            if exact_name:
-                return cursor.execute(
-                    """
-                    SELECT entity_name, entity_type, mention_count
-                    FROM public.ner_entity_frequency
-                    WHERE entity_name = %s
-                    ORDER BY mention_count DESC, entity_type LIMIT %s
-                    """,
-                    (exact_name, limit),
-                ).fetchall()
-            where = "" if after is None else "WHERE (mention_count, entity_name, entity_type) < (%s, %s, %s)"
-            params = (limit,) if after is None else (*after, limit)
+            cursor.execute("SET LOCAL statement_timeout = '15s'")
             return cursor.execute(
                 f"""
                 SELECT entity_name, entity_type, mention_count
                 FROM public.ner_entity_frequency
-                {where}
+                WHERE {" AND ".join(conditions) or "TRUE"}
                 ORDER BY mention_count DESC, entity_name DESC, entity_type DESC
                 LIMIT %s
                 """,
