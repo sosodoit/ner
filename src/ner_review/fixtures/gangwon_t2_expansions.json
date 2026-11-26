@@ -1,0 +1,1198 @@
+{
+  "run_id": "run_response_2_t2_test1_20261117_192958_강원일보_OPENAI_gpt-5.1",
+  "cases": [
+    {
+      "sentence": {
+        "sentence_id": "NLRW2600000001.1002.4.1",
+        "text": "복지바우처는 1인당 20만 원씩 총 935명에게 지원되며 지급된 카드는 도내 문화, 취미, 스포츠, 여행 분야 등 39개 업종 사업장에서 <3월: DT>부터 사용할 수 있다.",
+        "entities": [
+          {
+            "entity_id": "NLRW2600000001.1002.4.1.E1",
+            "target_span": "<3월: DT>",
+            "target_type": "DT"
+          }
+        ]
+      },
+      "response": {
+        "reviews": [
+          {
+            "sentence_id": "NLRW2600000001.1002.4.1",
+            "entity_id": "NLRW2600000001.1002.4.1.E1",
+            "target_span": "<3월: DT>부터",
+            "corrected_span": "<3월부터: DT>",
+            "error_lv1": "span_error",
+            "error_lv2": "span_expansion",
+            "reason": "dt 5: 범위 표지 ‘부터’ 포함 확장",
+            "review_needed": false
+          }
+        ]
+      },
+      "expected_span": "<3월부터: DT>"
+    },
+    {
+      "sentence": {
+        "sentence_id": "NLRW2600000001.10065.1.1",
+        "text": "<10일: DT>부터 재활용품 상설교환소 운영 시작",
+        "entities": [
+          {
+            "entity_id": "NLRW2600000001.10065.1.1.E1",
+            "target_span": "<10일: DT>",
+            "target_type": "DT"
+          }
+        ]
+      },
+      "response": {
+        "reviews": [
+          {
+            "sentence_id": "NLRW2600000001.10065.1.1",
+            "entity_id": "NLRW2600000001.10065.1.1.E1",
+            "target_span": "<10일: DT>부터",
+            "corrected_span": "<10일부터: DT>",
+            "error_lv1": "span_error",
+            "error_lv2": "span_expansion",
+            "reason": "dt 5: 범위 표지 ‘부터’ 포함해 날짜 범위 확장",
+            "review_needed": false
+          }
+        ]
+      },
+      "expected_span": "<10일부터: DT>"
+    },
+    {
+      "sentence": {
+        "sentence_id": "FIXTURE.T4.1",
+        "text": "선수는 <1년: DT> 동안 꾸준히 훈련했다.",
+        "entities": [
+          {
+            "entity_id": "FIXTURE.T4.1.E1",
+            "target_span": "<1년: DT>",
+            "target_type": "DT"
+          }
+        ]
+      },
+      "response": {
+        "reviews": [
+          {
+            "sentence_id": "FIXTURE.T4.1",
+            "entity_id": "FIXTURE.T4.1.E1",
+            "target_span": "<1년: DT> 동안",
+            "corrected_span": "<1년 동안: DT>",
+            "error_lv1": "span_error",
+            "error_lv2": "span_expansion",
+            "reason": "dt 5: 기간 표지 ‘동안’ 포함 확장",
+            "review_needed": false
+          }
+        ]
+      },
+      "expected_span": "<1년 동안: DT>"
+    },
+    {
+      "sentence": {
+        "sentence_id": "FIXTURE.T4.2",
+        "text": "지난 <2019년: DT> 기록을 넘어섰다.",
+        "entities": [
+          {
+            "entity_id": "FIXTURE.T4.2.E1",
+            "target_span": "<2019년: DT>",
+            "target_type": "DT"
+          }
+        ]
+      },
+      "response": {
+        "reviews": [
+          {
+            "sentence_id": "FIXTURE.T4.2",
+            "entity_id": "FIXTURE.T4.2.E1",
+            "target_span": "지난 <2019년: DT>",
+            "corrected_span": "<지난 2019년: DT>",
+            "error_lv1": "span_error",
+            "error_lv2": "span_expansion",
+            "reason": "dt 3: 날짜 수식어 ‘지난’ 포함 확장",
+            "review_needed": false
+          }
+        ]
+      },
+      "expected_span": "<지난 2019년: DT>"
+    },
+    {
+      "sentence": {
+        "sentence_id": "FIXTURE.T4.3",
+        "text": "<20대 대선: EV> 투표율을 비교했다.",
+        "entities": [
+          {
+            "entity_id": "FIXTURE.T4.3.E1",
+            "target_span": "<20대 대선: EV>",
+            "target_type": "EV"
+          }
+        ]
+      },
+      "response": {
+        "reviews": [
+          {
+            "sentence_id": "FIXTURE.T4.3",
+            "entity_id": "FIXTURE.T4.3.E1",
+            "target_span": "<20대 대선: EV>",
+            "corrected_span": "20대 <대선: EV>",
+            "error_lv1": "span_error",
+            "error_lv2": "span_reduction",
+            "reason": "ev 6.4: 선거명 앞 회차를 태그 밖으로 이동",
+            "review_needed": false
+          }
+        ]
+      },
+      "expected_span": "20대 <대선: EV>"
+    },
+    {
+      "sentence": {
+        "sentence_id": "FIXTURE.T4.4",
+        "text": "<K리그1: EV> 구단이 선수를 영입했다.",
+        "entities": [
+          {
+            "entity_id": "FIXTURE.T4.4.E1",
+            "target_span": "<K리그1: EV>",
+            "target_type": "EV"
+          }
+        ]
+      },
+      "response": {
+        "reviews": [
+          {
+            "sentence_id": "FIXTURE.T4.4",
+            "entity_id": "FIXTURE.T4.4.E1",
+            "target_span": "<K리그1: EV>",
+            "corrected_span": "<K리그1: OG>",
+            "error_lv1": "tagging_error",
+            "error_lv2": null,
+            "reason": "ev 5.3: 소속 조직 문맥은 OG",
+            "review_needed": false
+          }
+        ]
+      },
+      "expected_span": "<K리그1: OG>"
+    }
+  ],
+  "confirmed_cases_note": "네 언론사의 확인 사례를 짧게 재구성한 회귀 입력이다. response는 검증용 응답이며 source_sentence_id는 t4 원문 위치다. expected_spans는 입력 개체 순서의 저장 수정안이고, expected_manual_ids는 매칭 실패로 검수가 필요한 개체다.",
+  "confirmed_cases": [
+    {
+      "source_sentence_id": "NPRW2600000001.46681.5.1",
+      "sentence": {
+        "sentence_id": "FIXTURE.T5.1",
+        "text": "<이날: DT> 간담회에는 대학 총장들이 참석했다.",
+        "entities": [
+          {
+            "entity_id": "FIXTURE.T5.1.E1",
+            "target_span": "<이날: DT>",
+            "target_type": "DT"
+          }
+        ]
+      },
+      "response": {
+        "reviews": []
+      },
+      "expected_spans": [
+        null
+      ]
+    },
+    {
+      "source_sentence_id": "NPRW2600000002.10206.4.1",
+      "sentence": {
+        "sentence_id": "FIXTURE.T5.2",
+        "text": "특별열차는 단 <하루: DT>만 운행한다.",
+        "entities": [
+          {
+            "entity_id": "FIXTURE.T5.2.E1",
+            "target_span": "<하루: DT>",
+            "target_type": "DT"
+          }
+        ]
+      },
+      "response": {
+        "reviews": []
+      },
+      "expected_spans": [
+        null
+      ]
+    },
+    {
+      "source_sentence_id": "NWRW2600000005.10085.4.2",
+      "sentence": {
+        "sentence_id": "FIXTURE.T5.3",
+        "text": "<이날: DT>부터는 새 광고를 공개한다.",
+        "entities": [
+          {
+            "entity_id": "FIXTURE.T5.3.E1",
+            "target_span": "<이날: DT>",
+            "target_type": "DT"
+          }
+        ]
+      },
+      "response": {
+        "reviews": [
+          {
+            "sentence_id": "FIXTURE.T5.3",
+            "entity_id": "FIXTURE.T5.3.E1",
+            "target_span": "<이날: DT>부터",
+            "corrected_span": "<이날부터: DT>",
+            "error_lv1": "span_error",
+            "error_lv2": "span_expansion",
+            "reason": "dt 5: 광고 공개 시작일의 범위 표지",
+            "review_needed": false
+          }
+        ]
+      },
+      "expected_spans": [
+        "<이날부터: DT>"
+      ]
+    },
+    {
+      "source_sentence_id": "NLRW2600000004.36797.1.1",
+      "sentence": {
+        "sentence_id": "FIXTURE.T5.4",
+        "text": "<수능: EV> <하루: DT> 전 도시 기능을 전환했다.",
+        "entities": [
+          {
+            "entity_id": "FIXTURE.T5.4.E1",
+            "target_span": "<수능: EV>",
+            "target_type": "EV"
+          },
+          {
+            "entity_id": "FIXTURE.T5.4.E2",
+            "target_span": "<하루: DT>",
+            "target_type": "DT"
+          }
+        ]
+      },
+      "response": {
+        "reviews": [
+          {
+            "sentence_id": "FIXTURE.T5.4",
+            "entity_id": "FIXTURE.T5.4.E2",
+            "target_span": "<하루: DT> 전",
+            "corrected_span": "<하루 전: DT>",
+            "error_lv1": "span_error",
+            "error_lv2": "span_expansion",
+            "reason": "dt 5: 수능을 기준으로 한 상대 시점",
+            "review_needed": false
+          }
+        ]
+      },
+      "expected_spans": [
+        null,
+        "<하루 전: DT>"
+      ]
+    },
+    {
+      "source_sentence_id": "NLRW2600000004.38977.5.2",
+      "sentence": {
+        "sentence_id": "FIXTURE.T5.5",
+        "text": "<올해: DT>부터는 <2025년 5월 1일: DT> 이후 채용된 졸업예정자도 지원할 수 있다.",
+        "entities": [
+          {
+            "entity_id": "FIXTURE.T5.5.E1",
+            "target_span": "<올해: DT>",
+            "target_type": "DT"
+          },
+          {
+            "entity_id": "FIXTURE.T5.5.E2",
+            "target_span": "<2025년 5월 1일: DT>",
+            "target_type": "DT"
+          }
+        ]
+      },
+      "response": {
+        "reviews": [
+          {
+            "sentence_id": "FIXTURE.T5.5",
+            "entity_id": "FIXTURE.T5.5.E1",
+            "target_span": "<올해: DT>부터",
+            "corrected_span": "<올해부터: DT>",
+            "error_lv1": "span_error",
+            "error_lv2": "span_expansion",
+            "reason": "dt 5: 지원 시작 시점",
+            "review_needed": false
+          },
+          {
+            "sentence_id": "FIXTURE.T5.5",
+            "entity_id": "FIXTURE.T5.5.E2",
+            "target_span": "<2025년 5월 1일: DT> 이후",
+            "corrected_span": "<2025년 5월 1일 이후: DT>",
+            "error_lv1": "span_error",
+            "error_lv2": "span_expansion",
+            "reason": "dt 5: 채용 시점의 하한",
+            "review_needed": false
+          }
+        ]
+      },
+      "expected_spans": [
+        "<올해부터: DT>",
+        "<2025년 5월 1일 이후: DT>"
+      ]
+    },
+    {
+      "source_sentence_id": "NWRW2600000005.17203.5.1",
+      "sentence": {
+        "sentence_id": "FIXTURE.T5.6",
+        "text": "보고회에서 <2025년: DT> <상반기: DT> 주요업무를 점검했다.",
+        "entities": [
+          {
+            "entity_id": "FIXTURE.T5.6.E1",
+            "target_span": "<2025년: DT>",
+            "target_type": "DT"
+          },
+          {
+            "entity_id": "FIXTURE.T5.6.E2",
+            "target_span": "<상반기: DT>",
+            "target_type": "DT"
+          }
+        ]
+      },
+      "response": {
+        "reviews": [
+          {
+            "sentence_id": "FIXTURE.T5.6",
+            "entity_id": "FIXTURE.T5.6.E1",
+            "target_span": "<2025년: DT> <상반기: DT>",
+            "corrected_span": "<2025년 상반기: DT>",
+            "error_lv1": "span_error",
+            "error_lv2": "span_tagging_merge",
+            "reason": "dt 3: 연도와 하위 시기가 하나의 기간",
+            "review_needed": false
+          },
+          {
+            "sentence_id": "FIXTURE.T5.6",
+            "entity_id": "FIXTURE.T5.6.E2",
+            "target_span": "<2025년: DT> <상반기: DT>",
+            "corrected_span": "<2025년 상반기: DT>",
+            "error_lv1": "span_error",
+            "error_lv2": "span_tagging_merge",
+            "reason": "dt 3: 연도와 하위 시기가 하나의 기간",
+            "review_needed": false
+          }
+        ]
+      },
+      "expected_spans": [
+        "<2025년 상반기: DT>",
+        "<2025년 상반기: DT>"
+      ]
+    },
+    {
+      "source_sentence_id": "NLRW2600000004.8290.4.1",
+      "sentence": {
+        "sentence_id": "FIXTURE.T5.7",
+        "text": "이범석 <청주시: OG>장은 <청주시: OG>가 예산을 들여 시설을 개선했다고 말했다.",
+        "entities": [
+          {
+            "entity_id": "FIXTURE.T5.7.E1",
+            "target_span": "<청주시: OG>",
+            "target_type": "OG"
+          },
+          {
+            "entity_id": "FIXTURE.T5.7.E2",
+            "target_span": "<청주시: OG>",
+            "target_type": "OG"
+          }
+        ]
+      },
+      "response": {
+        "reviews": [
+          {
+            "sentence_id": "FIXTURE.T5.7",
+            "entity_id": "FIXTURE.T5.7.E1",
+            "target_span": "<청주시: OG>",
+            "corrected_span": "청주시",
+            "error_lv1": "tagging_wrong",
+            "error_lv2": null,
+            "reason": "all 4.3: 청주시장은 지자체장 직위",
+            "review_needed": false
+          }
+        ]
+      },
+      "expected_spans": [
+        "청주시",
+        null
+      ]
+    },
+    {
+      "source_sentence_id": "NLRW2600000004.11663.5.1",
+      "sentence": {
+        "sentence_id": "FIXTURE.T5.8",
+        "text": "당진시의 텀블러 할인 지원이 호응을 얻자 <시: OG>는 이 사업을 확대했다.",
+        "entities": [
+          {
+            "entity_id": "FIXTURE.T5.8.E1",
+            "target_span": "<시: OG>",
+            "target_type": "OG"
+          }
+        ]
+      },
+      "response": {
+        "reviews": []
+      },
+      "expected_spans": [
+        null
+      ]
+    },
+    {
+      "source_sentence_id": "NPRW2600000002.10339.3.1",
+      "sentence": {
+        "sentence_id": "FIXTURE.T5.9",
+        "text": "선수는 <K리그1: EV> 3라운드 홈경기를 준비하고 있다.",
+        "entities": [
+          {
+            "entity_id": "FIXTURE.T5.9.E1",
+            "target_span": "<K리그1: EV>",
+            "target_type": "EV"
+          }
+        ]
+      },
+      "response": {
+        "reviews": [
+          {
+            "sentence_id": "FIXTURE.T5.9",
+            "entity_id": "FIXTURE.T5.9.E1",
+            "target_span": "<K리그1: EV> 3라운드",
+            "corrected_span": "<K리그1 3라운드: EV>",
+            "error_lv1": "span_error",
+            "error_lv2": "span_expansion",
+            "reason": "ev 6.5: 특정 홈경기의 라운드 포함",
+            "review_needed": false
+          }
+        ]
+      },
+      "expected_spans": [
+        "<K리그1 3라운드: EV>"
+      ]
+    },
+    {
+      "source_sentence_id": "NWRW2600000005.5693.4.1",
+      "sentence": {
+        "sentence_id": "FIXTURE.T5.10",
+        "text": "경유 <자동차: AF>만 보조금 지원 대상이었다.",
+        "entities": [
+          {
+            "entity_id": "FIXTURE.T5.10.E1",
+            "target_span": "<자동차: AF>",
+            "target_type": "AF"
+          }
+        ]
+      },
+      "response": {
+        "reviews": []
+      },
+      "expected_spans": [
+        null
+      ]
+    },
+    {
+      "source_sentence_id": "NLRW2600000004.3666.3.1",
+      "sentence": {
+        "sentence_id": "FIXTURE.T5.11",
+        "text": "<자동차: AF>세 연납을 통해 세금을 징수했다.",
+        "entities": [
+          {
+            "entity_id": "FIXTURE.T5.11.E1",
+            "target_span": "<자동차: AF>",
+            "target_type": "AF"
+          }
+        ]
+      },
+      "response": {
+        "reviews": [
+          {
+            "sentence_id": "FIXTURE.T5.11",
+            "entity_id": "FIXTURE.T5.11.E1",
+            "target_span": "<자동차: AF>",
+            "corrected_span": "자동차",
+            "error_lv1": "tagging_wrong",
+            "error_lv2": null,
+            "reason": "all 4.3: 세금명 자동차세 내부의 운송수단 태그",
+            "review_needed": false
+          }
+        ]
+      },
+      "expected_spans": [
+        "자동차"
+      ]
+    },
+    {
+      "source_sentence_id": "NPRW2600000001.16087.7.1",
+      "sentence": {
+        "sentence_id": "FIXTURE.T5.12",
+        "text": "이현지 연구원이 실적을 분석했고 <이: PS> 연구원은 개선 가능성을 전망했다.",
+        "entities": [
+          {
+            "entity_id": "FIXTURE.T5.12.E1",
+            "target_span": "<이: PS>",
+            "target_type": "PS"
+          }
+        ]
+      },
+      "response": {
+        "reviews": []
+      },
+      "expected_spans": [
+        null
+      ]
+    },
+    {
+      "source_sentence_id": "NPRW2600000002.31133.1.1",
+      "sentence": {
+        "sentence_id": "FIXTURE.T5.13",
+        "text": "취업제한 <10년: DT> 구형",
+        "entities": [
+          {
+            "entity_id": "FIXTURE.T5.13.E1",
+            "target_span": "<10년: DT>",
+            "target_type": "DT"
+          }
+        ]
+      },
+      "response": {
+        "reviews": []
+      },
+      "expected_spans": [
+        null
+      ]
+    },
+    {
+      "source_sentence_id": "NLRW2600000004.8290.4.1",
+      "sentence": {
+        "sentence_id": "FIXTURE.T5.14",
+        "text": "최근 <10년: DT> 동안 시설을 개선했다.",
+        "entities": [
+          {
+            "entity_id": "FIXTURE.T5.14.E1",
+            "target_span": "<10년: DT>",
+            "target_type": "DT"
+          }
+        ]
+      },
+      "response": {
+        "reviews": [
+          {
+            "sentence_id": "FIXTURE.T5.14",
+            "entity_id": "FIXTURE.T5.14.E1",
+            "target_span": "<10년: DT> 동안",
+            "corrected_span": "<10년 동안: DT>",
+            "error_lv1": "span_error",
+            "error_lv2": "span_expansion",
+            "reason": "dt 5: 원문에 있는 지속 표지 동안 포함",
+            "review_needed": false
+          }
+        ]
+      },
+      "expected_spans": [
+        "<10년 동안: DT>"
+      ]
+    },
+    {
+      "source_sentence_id": "NPRW2600000002.10011.2.1",
+      "sentence": {
+        "sentence_id": "FIXTURE.T5.15",
+        "text": "채용은 <3월: DT>에 공고하고 <3월: DT>부터 시작한다.",
+        "entities": [
+          {
+            "entity_id": "FIXTURE.T5.15.E1",
+            "target_span": "<3월: DT>",
+            "target_type": "DT"
+          },
+          {
+            "entity_id": "FIXTURE.T5.15.E2",
+            "target_span": "<3월: DT>",
+            "target_type": "DT"
+          }
+        ]
+      },
+      "response": {
+        "reviews": [
+          {
+            "sentence_id": "FIXTURE.T5.15",
+            "entity_id": "FIXTURE.T5.15.E1",
+            "target_span": "<3월: DT>부터",
+            "corrected_span": "<3월부터: DT>",
+            "error_lv1": "span_error",
+            "error_lv2": "span_expansion",
+            "reason": "dt 5: 채용 시작 시점의 범위 표지",
+            "review_needed": false
+          },
+          {
+            "sentence_id": "FIXTURE.T5.15",
+            "entity_id": "FIXTURE.T5.15.E2",
+            "target_span": "<3월: DT>부터",
+            "corrected_span": "<3월부터: DT>",
+            "error_lv1": "span_error",
+            "error_lv2": "span_expansion",
+            "reason": "dt 5: 채용 시작 시점의 범위 표지",
+            "review_needed": false
+          }
+        ]
+      },
+      "expected_spans": [
+        null,
+        "<3월부터: DT>"
+      ],
+      "expected_manual_ids": [
+        "FIXTURE.T5.15.E1"
+      ]
+    },
+    {
+      "sentence": {
+        "sentence_id": "FIXTURE.T6.1",
+        "text": "<이날: DT> 간담회에서 논의했다.",
+        "entities": [
+          {
+            "entity_id": "FIXTURE.T6.1.E1",
+            "target_span": "<이날: DT>",
+            "target_type": "DT"
+          }
+        ]
+      },
+      "response": {
+        "reviews": []
+      },
+      "expected_spans": [
+        null
+      ]
+    },
+    {
+      "sentence": {
+        "sentence_id": "FIXTURE.T6.2",
+        "text": "<올해: DT>만 47명 사망",
+        "entities": [
+          {
+            "entity_id": "FIXTURE.T6.2.E1",
+            "target_span": "<올해: DT>",
+            "target_type": "DT"
+          }
+        ]
+      },
+      "response": {
+        "reviews": [
+          {
+            "sentence_id": "FIXTURE.T6.2",
+            "entity_id": "FIXTURE.T6.2.E1",
+            "target_span": "<올해: DT>만",
+            "corrected_span": "<올해만: DT>",
+            "error_lv1": "span_error",
+            "error_lv2": "span_expansion",
+            "reason": "dt 5: 집계 기간 한정",
+            "review_needed": false
+          }
+        ]
+      },
+      "expected_spans": [
+        "<올해만: DT>"
+      ]
+    },
+    {
+      "sentence": {
+        "sentence_id": "FIXTURE.T6.3",
+        "text": "오는 <2026년: DT>까지 시행한다.",
+        "entities": [
+          {
+            "entity_id": "FIXTURE.T6.3.E1",
+            "target_span": "<2026년: DT>",
+            "target_type": "DT"
+          }
+        ]
+      },
+      "response": {
+        "reviews": [
+          {
+            "sentence_id": "FIXTURE.T6.3",
+            "entity_id": "FIXTURE.T6.3.E1",
+            "target_span": "오는 <2026년: DT>까지",
+            "corrected_span": "<오는 2026년까지: DT>",
+            "error_lv1": "span_error",
+            "error_lv2": "span_expansion",
+            "reason": "dt 3·5: 양쪽 경계 포함",
+            "review_needed": false
+          }
+        ]
+      },
+      "expected_spans": [
+        "<오는 2026년까지: DT>"
+      ]
+    },
+    {
+      "sentence": {
+        "sentence_id": "FIXTURE.T6.4",
+        "text": "<2021년: DT> 이후 조사했다.",
+        "entities": [
+          {
+            "entity_id": "FIXTURE.T6.4.E1",
+            "target_span": "<2021년: DT>",
+            "target_type": "DT"
+          }
+        ]
+      },
+      "response": {
+        "reviews": [
+          {
+            "sentence_id": "FIXTURE.T6.4",
+            "entity_id": "FIXTURE.T6.4.E1",
+            "target_span": "<2021년: DT> 이후",
+            "corrected_span": "<2021년 이후: DT>",
+            "error_lv1": "span_error",
+            "error_lv2": "span_expansion",
+            "reason": "dt 5: 범위 표지 포함",
+            "review_needed": false
+          }
+        ]
+      },
+      "expected_spans": [
+        "<2021년 이후: DT>"
+      ]
+    },
+    {
+      "sentence": {
+        "sentence_id": "FIXTURE.T6.5",
+        "text": "<4년: DT> 만에 마쳤다.",
+        "entities": [
+          {
+            "entity_id": "FIXTURE.T6.5.E1",
+            "target_span": "<4년: DT>",
+            "target_type": "DT"
+          }
+        ]
+      },
+      "response": {
+        "reviews": [
+          {
+            "sentence_id": "FIXTURE.T6.5",
+            "entity_id": "FIXTURE.T6.5.E1",
+            "target_span": "<4년: DT> 만",
+            "corrected_span": "<4년 만: DT>",
+            "error_lv1": "span_error",
+            "error_lv2": "span_expansion",
+            "reason": "dt 5: 경과",
+            "review_needed": false
+          }
+        ]
+      },
+      "expected_spans": [
+        "<4년 만: DT>"
+      ]
+    },
+    {
+      "sentence": {
+        "sentence_id": "FIXTURE.T6.6",
+        "text": "<2019년: DT> 만 17세에 등단했다.",
+        "entities": [
+          {
+            "entity_id": "FIXTURE.T6.6.E1",
+            "target_span": "<2019년: DT>",
+            "target_type": "DT"
+          }
+        ]
+      },
+      "response": {
+        "reviews": []
+      },
+      "expected_spans": [
+        null
+      ]
+    },
+    {
+      "sentence": {
+        "sentence_id": "FIXTURE.T6.7",
+        "text": "<서울시: OG>장이 말했다.",
+        "entities": [
+          {
+            "entity_id": "FIXTURE.T6.7.E1",
+            "target_span": "<서울시: OG>",
+            "target_type": "OG"
+          }
+        ]
+      },
+      "response": {
+        "reviews": [
+          {
+            "sentence_id": "FIXTURE.T6.7",
+            "entity_id": "FIXTURE.T6.7.E1",
+            "target_span": "<서울시: OG>",
+            "corrected_span": "서울시",
+            "error_lv1": "tagging_wrong",
+            "error_lv2": null,
+            "reason": "all 4.3: 직위 내부",
+            "review_needed": false
+          }
+        ]
+      },
+      "expected_spans": [
+        "서울시"
+      ]
+    },
+    {
+      "sentence": {
+        "sentence_id": "FIXTURE.T6.8",
+        "text": "서울시는 계획을 밝혔다. <시: OG>가 시행한다.",
+        "entities": [
+          {
+            "entity_id": "FIXTURE.T6.8.E1",
+            "target_span": "<시: OG>",
+            "target_type": "OG"
+          }
+        ]
+      },
+      "response": {
+        "reviews": []
+      },
+      "expected_spans": [
+        null
+      ]
+    },
+    {
+      "sentence": {
+        "sentence_id": "FIXTURE.T6.9",
+        "text": "<자동차: AF>보험료를 인하했다.",
+        "entities": [
+          {
+            "entity_id": "FIXTURE.T6.9.E1",
+            "target_span": "<자동차: AF>",
+            "target_type": "AF"
+          }
+        ]
+      },
+      "response": {
+        "reviews": [
+          {
+            "sentence_id": "FIXTURE.T6.9",
+            "entity_id": "FIXTURE.T6.9.E1",
+            "target_span": "<자동차: AF>",
+            "corrected_span": "자동차",
+            "error_lv1": "tagging_wrong",
+            "error_lv2": null,
+            "reason": "af 4: 보험명 내부",
+            "review_needed": false
+          }
+        ]
+      },
+      "expected_spans": [
+        "자동차"
+      ]
+    },
+    {
+      "sentence": {
+        "sentence_id": "FIXTURE.T6.10",
+        "text": "<6·3대선: EV>에서 투표했다.",
+        "entities": [
+          {
+            "entity_id": "FIXTURE.T6.10.E1",
+            "target_span": "<6·3대선: EV>",
+            "target_type": "EV"
+          }
+        ]
+      },
+      "response": {
+        "reviews": []
+      },
+      "expected_spans": [
+        null
+      ]
+    },
+    {
+      "sentence": {
+        "sentence_id": "FIXTURE.T6.11",
+        "text": "<12·3 비상계엄: EV>을 다뤘다.",
+        "entities": [
+          {
+            "entity_id": "FIXTURE.T6.11.E1",
+            "target_span": "<12·3 비상계엄: EV>",
+            "target_type": "EV"
+          }
+        ]
+      },
+      "response": {
+        "reviews": []
+      },
+      "expected_spans": [
+        null
+      ]
+    },
+    {
+      "sentence": {
+        "sentence_id": "FIXTURE.T6.12",
+        "text": "<매년: DT> 행사를 연다.",
+        "entities": [
+          {
+            "entity_id": "FIXTURE.T6.12.E1",
+            "target_span": "<매년: DT>",
+            "target_type": "DT"
+          }
+        ]
+      },
+      "response": {
+        "reviews": [
+          {
+            "sentence_id": "FIXTURE.T6.12",
+            "entity_id": "FIXTURE.T6.12.E1",
+            "target_span": "<매년: DT>",
+            "corrected_span": "매년",
+            "error_lv1": "tagging_wrong",
+            "error_lv2": null,
+            "reason": "dt 6: 반복 주기",
+            "review_needed": false
+          }
+        ]
+      },
+      "expected_spans": [
+        "매년"
+      ]
+    },
+    {
+      "sentence": {
+        "sentence_id": "FIXTURE.T6.13",
+        "text": "<24시간: DT> 동안 진행했다.",
+        "entities": [
+          {
+            "entity_id": "FIXTURE.T6.13.E1",
+            "target_span": "<24시간: DT>",
+            "target_type": "DT"
+          }
+        ]
+      },
+      "response": {
+        "reviews": [
+          {
+            "sentence_id": "FIXTURE.T6.13",
+            "entity_id": "FIXTURE.T6.13.E1",
+            "target_span": "<24시간: DT>",
+            "corrected_span": "24시간",
+            "error_lv1": "tagging_wrong",
+            "error_lv2": null,
+            "reason": "dt 6: 시간 단위",
+            "review_needed": false
+          }
+        ]
+      },
+      "expected_spans": [
+        "24시간"
+      ]
+    },
+    {
+      "sentence": {
+        "sentence_id": "FIXTURE.T6.14",
+        "text": "메타가 보유한 <인스타그램: OG>의 이용자 수다.",
+        "entities": [
+          {
+            "entity_id": "FIXTURE.T6.14.E1",
+            "target_span": "<인스타그램: OG>",
+            "target_type": "OG"
+          }
+        ]
+      },
+      "response": {
+        "reviews": [
+          {
+            "sentence_id": "FIXTURE.T6.14",
+            "entity_id": "FIXTURE.T6.14.E1",
+            "target_span": "<인스타그램: OG>",
+            "corrected_span": "인스타그램",
+            "error_lv1": "tagging_wrong",
+            "error_lv2": null,
+            "reason": "all 1: 플랫폼",
+            "review_needed": false
+          }
+        ]
+      },
+      "expected_spans": [
+        "인스타그램"
+      ]
+    },
+    {
+      "sentence": {
+        "sentence_id": "FIXTURE.T6.15",
+        "text": "<인스타그램: OG> 관계자가 밝혔다.",
+        "entities": [
+          {
+            "entity_id": "FIXTURE.T6.15.E1",
+            "target_span": "<인스타그램: OG>",
+            "target_type": "OG"
+          }
+        ]
+      },
+      "response": {
+        "reviews": []
+      },
+      "expected_spans": [
+        null
+      ]
+    },
+    {
+      "sentence": {
+        "sentence_id": "FIXTURE.T6.16",
+        "text": "<K리그1: EV>에서 총 3경기를 치렀다.",
+        "entities": [
+          {
+            "entity_id": "FIXTURE.T6.16.E1",
+            "target_span": "<K리그1: EV>",
+            "target_type": "EV"
+          }
+        ]
+      },
+      "response": {
+        "reviews": []
+      },
+      "expected_spans": [
+        null
+      ]
+    },
+    {
+      "sentence": {
+        "sentence_id": "FIXTURE.T6.17",
+        "text": "<올해: DT> <전반기: DT> 실적을 발표했다.",
+        "entities": [
+          {
+            "entity_id": "FIXTURE.T6.17.E1",
+            "target_span": "<올해: DT>",
+            "target_type": "DT"
+          },
+          {
+            "entity_id": "FIXTURE.T6.17.E2",
+            "target_span": "<전반기: DT>",
+            "target_type": "DT"
+          }
+        ]
+      },
+      "response": {
+        "reviews": [
+          {
+            "sentence_id": "FIXTURE.T6.17",
+            "entity_id": "FIXTURE.T6.17.E1",
+            "target_span": "<올해: DT> <전반기: DT>",
+            "corrected_span": "<올해 전반기: DT>",
+            "error_lv1": "span_error",
+            "error_lv2": "span_tagging_merge",
+            "reason": "dt 3: 한 기간의 두 구성 요소",
+            "review_needed": false
+          },
+          {
+            "sentence_id": "FIXTURE.T6.17",
+            "entity_id": "FIXTURE.T6.17.E2",
+            "target_span": "<올해: DT> <전반기: DT>",
+            "corrected_span": "<올해 전반기: DT>",
+            "error_lv1": "span_error",
+            "error_lv2": "span_tagging_merge",
+            "reason": "dt 3: 한 기간의 두 구성 요소",
+            "review_needed": false
+          }
+        ]
+      },
+      "expected_spans": [
+        "<올해 전반기: DT>",
+        "<올해 전반기: DT>"
+      ]
+    },
+    {
+      "sentence": {
+        "sentence_id": "FIXTURE.T6.18",
+        "text": "<잠실: LC> <롯데월드타워: AF>를 찾았다.",
+        "entities": [
+          {
+            "entity_id": "FIXTURE.T6.18.E1",
+            "target_span": "<잠실: LC>",
+            "target_type": "LC"
+          },
+          {
+            "entity_id": "FIXTURE.T6.18.E2",
+            "target_span": "<롯데월드타워: AF>",
+            "target_type": "AF"
+          }
+        ]
+      },
+      "response": {
+        "reviews": []
+      },
+      "expected_spans": [
+        null,
+        null
+      ]
+    },
+    {
+      "sentence": {
+        "sentence_id": "FIXTURE.T6.19",
+        "text": "<이수현: PS> 씨를 기렸다. <이: PS>씨의 부모도 참석했다.",
+        "entities": [
+          {
+            "entity_id": "FIXTURE.T6.19.E1",
+            "target_span": "<이수현: PS>",
+            "target_type": "PS"
+          },
+          {
+            "entity_id": "FIXTURE.T6.19.E2",
+            "target_span": "<이: PS>",
+            "target_type": "PS"
+          }
+        ]
+      },
+      "response": {
+        "reviews": []
+      },
+      "expected_spans": [
+        null,
+        null
+      ]
+    },
+    {
+      "sentence": {
+        "sentence_id": "FIXTURE.T6.20",
+        "text": "<20대 대선: EV> 투표율과 이번 <대선: EV> 투표율을 비교했다.",
+        "entities": [
+          {
+            "entity_id": "FIXTURE.T6.20.E1",
+            "target_span": "<20대 대선: EV>",
+            "target_type": "EV"
+          },
+          {
+            "entity_id": "FIXTURE.T6.20.E2",
+            "target_span": "<대선: EV>",
+            "target_type": "EV"
+          }
+        ]
+      },
+      "response": {
+        "reviews": [
+          {
+            "sentence_id": "FIXTURE.T6.20",
+            "entity_id": "FIXTURE.T6.20.E1",
+            "target_span": "<20대 대선: EV>",
+            "corrected_span": "20대 <대선: EV>",
+            "error_lv1": "span_error",
+            "error_lv2": "span_reduction",
+            "reason": "ev 6.4: 앞 선거명의 회차 제외",
+            "review_needed": false
+          }
+        ]
+      },
+      "expected_spans": [
+        "20대 <대선: EV>",
+        null
+      ]
+    },
+    {
+      "sentence": {
+        "sentence_id": "FIXTURE.T6.21",
+        "text": "<올해: DT>와 <지난해: DT> 실적을 비교했다.",
+        "entities": [
+          {
+            "entity_id": "FIXTURE.T6.21.E1",
+            "target_span": "<올해: DT>",
+            "target_type": "DT"
+          },
+          {
+            "entity_id": "FIXTURE.T6.21.E2",
+            "target_span": "<지난해: DT>",
+            "target_type": "DT"
+          }
+        ]
+      },
+      "response": {
+        "reviews": []
+      },
+      "expected_spans": [
+        null,
+        null
+      ]
+    }
+  ]
+}
