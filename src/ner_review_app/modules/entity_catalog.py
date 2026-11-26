@@ -24,6 +24,49 @@ REQUIRED_INDEXES = {
     "idx_entity_location_doc",
 }
 
+# 화면의 기사별 재집계와 노트북의 목록 추출·배치 적재에서 같은 최종 문장을 사용한다.
+ENTITY_SOURCE_CTE_SQL = r"""
+    WITH source AS (
+        SELECT COALESCE(d.publisher, split_part(d.doc_id, '.', 1)) AS press_id,
+               split_part(d.doc_id, '.', 1) AS file_id,
+               d.doc_id, d.paragraph_id, d.sentence_id, d.topic, d.form,
+               COALESCE(r.modified_form, d.form) AS final_form
+        FROM public.ner_documents d
+        LEFT JOIN LATERAL (
+            SELECT modified_form FROM (
+                SELECT h.modified_form, h.updated_at, h.data_version, 0 AS source_priority
+                FROM public.ner_human_review h
+                WHERE h.press = d.publisher AND h.doc_id = d.doc_id
+                  AND h.sentence_id = d.sentence_id
+                  AND h.review_status = '완료' AND h.is_modified
+                  AND h.modified_form IS NOT NULL
+                UNION ALL
+                SELECT a.modified_form, a.updated_at, a.data_version, 1 AS source_priority
+                FROM public.ner_human_review_add a
+                WHERE a.press = d.publisher AND a.doc_id = d.doc_id
+                  AND a.sentence_id = d.sentence_id
+                  AND a.review_status = '완료' AND a.is_modified
+                  AND a.modified_form IS NOT NULL
+            ) completed
+            -- 수정 시각과 버전까지 같으면 참고 문장의 추가 검수 결과를 우선한다.
+            ORDER BY updated_at DESC NULLS LAST, data_version DESC, source_priority DESC
+            LIMIT 1
+        ) r ON TRUE
+        WHERE d.doc_id = ANY(%s)
+    )
+"""
+ENTITY_MENTIONS_INSERT_SQL = ENTITY_SOURCE_CTE_SQL + r"""
+    INSERT INTO public.ner_entity_mentions
+        (press_id, file_id, doc_id, paragraph_id, sentence_id,
+         topic, form, final_form, entity_name, entity_type)
+    SELECT s.press_id, s.file_id, s.doc_id, s.paragraph_id,
+           s.sentence_id, s.topic, s.form, s.final_form, m[1], m[2]
+    FROM source s
+    CROSS JOIN LATERAL regexp_matches(
+        s.final_form, '<\s*([^<>:]+?)\s*:\s*([^<>]+?)\s*>', 'g'
+    ) m
+"""
+
 
 def check_admin_password(password):
     expected = os.getenv("NER_ASSIGNMENT_PASSWORD", "")
@@ -131,7 +174,7 @@ def load_locations(entity_name, entity_type, after=None, limit=50):
             ).fetchall()
 
 
-def load_pending_articles(press, limit=25):
+def load_pending_articles(press, limit=100):
     with get_postgre_connect() as conn:
         with conn.cursor() as cursor:
             cursor.execute("SET TRANSACTION READ ONLY")
@@ -139,9 +182,15 @@ def load_pending_articles(press, limit=25):
                 """
                 WITH changed AS (
                     SELECT doc_id, MAX(updated_at) AS changed_at
-                    FROM public.ner_human_review
-                    WHERE press = %s AND review_status = '완료'
-                      AND is_modified AND updated_at IS NOT NULL
+                    FROM (
+                        SELECT doc_id, updated_at FROM public.ner_human_review
+                        WHERE press = %s AND review_status = '완료'
+                          AND is_modified AND updated_at IS NOT NULL
+                        UNION ALL
+                        SELECT doc_id, updated_at FROM public.ner_human_review_add
+                        WHERE press = %s AND review_status = '완료'
+                          AND is_modified AND updated_at IS NOT NULL
+                    ) reviews
                     GROUP BY doc_id
                 )
                 SELECT c.doc_id, c.changed_at
@@ -151,7 +200,7 @@ def load_pending_articles(press, limit=25):
                 ORDER BY c.changed_at DESC, c.doc_id
                 LIMIT %s
                 """,
-                (press, limit),
+                (press, press, limit),
             ).fetchall()
 
 
@@ -166,9 +215,12 @@ def refresh_article(doc_id, password):
                 SELECT EXISTS (
                     SELECT 1 FROM public.ner_human_review
                     WHERE doc_id = %s AND review_status = '완료' AND is_modified
+                    UNION ALL
+                    SELECT 1 FROM public.ner_human_review_add
+                    WHERE doc_id = %s AND review_status = '완료' AND is_modified
                 ) AS valid
                 """,
-                (doc_id,),
+                (doc_id, doc_id),
             ).fetchone()["valid"]
             if not valid:
                 raise ValueError("수정완료된 검수 문장이 있는 기사만 재집계할 수 있습니다.")
@@ -189,35 +241,8 @@ def refresh_article(doc_id, password):
             ).fetchall()
             cursor.execute("DELETE FROM public.ner_entity_mentions WHERE doc_id = %s", (doc_id,))
             cursor.execute(
-                r"""
-                WITH source AS (
-                    SELECT COALESCE(d.publisher, split_part(d.doc_id, '.', 1)) AS press_id,
-                           split_part(d.doc_id, '.', 1) AS file_id,
-                           d.doc_id, d.paragraph_id, d.sentence_id, d.topic, d.form,
-                           COALESCE(h.modified_form, d.form) AS final_form
-                    FROM public.ner_documents d
-                    LEFT JOIN LATERAL (
-                        SELECT modified_form FROM public.ner_human_review h
-                        WHERE h.press = d.publisher AND h.doc_id = d.doc_id
-                          AND h.sentence_id = d.sentence_id
-                          AND h.review_status = '완료' AND h.is_modified
-                          AND h.modified_form IS NOT NULL
-                        ORDER BY h.updated_at DESC NULLS LAST, h.data_version DESC
-                        LIMIT 1
-                    ) h ON TRUE
-                    WHERE d.doc_id = %s
-                )
-                INSERT INTO public.ner_entity_mentions
-                    (press_id, file_id, doc_id, paragraph_id, sentence_id,
-                     topic, form, final_form, entity_name, entity_type)
-                SELECT s.press_id, s.file_id, s.doc_id, s.paragraph_id,
-                       s.sentence_id, s.topic, s.form, s.final_form, m[1], m[2]
-                FROM source s
-                CROSS JOIN LATERAL regexp_matches(
-                    s.final_form, '<\s*([^<>:]+?)\s*:\s*([^<>]+?)\s*>', 'g'
-                ) m
-                """,
-                (doc_id,),
+                ENTITY_MENTIONS_INSERT_SQL,
+                ([doc_id],),
             )
             new_rows = cursor.execute(
                 """

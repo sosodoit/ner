@@ -13,6 +13,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from src.ner_review_app.modules.entity_catalog import (
     catalog_ready,
+    check_admin_password,
     load_catalog_page,
     load_locations,
     load_pending_articles,
@@ -31,13 +32,16 @@ def load_review_presses():
                 """
                 SELECT DISTINCT press FROM public.ner_human_review
                 WHERE review_status = '완료' AND is_modified
+                UNION
+                SELECT DISTINCT press FROM public.ner_human_review_add
+                WHERE review_status = '완료' AND is_modified
                 ORDER BY press
                 """
             ).fetchall()
     return [row["press"] for row in rows]
 
 
-st.title("개체명 목록")
+# st.title("개체명 목록")
 st.caption("개체명 빈도와 출현 위치를 페이지 단위로 조회합니다. 완료된 수정 기사는 기사 단위로 목록에 반영할 수 있습니다.")
 setup_message = st.session_state.pop("catalog_setup_message", None)
 if setup_message:
@@ -125,35 +129,58 @@ with catalog_tab:
         st.error(f"개체명 조회 실패: {exc}")
 
 with refresh_tab:
-    st.caption("완료 상태이며 수정된 문장만 원문 대신 적용합니다. 재집계는 선택한 기사 전체의 출현 목록·빈도·위치를 한 트랜잭션에서 갱신합니다.")
+    st.caption("배정 문장과 참고 문장 검수에서 완료 상태이며 수정된 문장을 함께 반영합니다. 같은 문장은 가장 최근 완료된 수정본을 적용하며, 기사 전체의 출현 목록·빈도·위치를 한 트랜잭션에서 갱신합니다.")
+    st.caption("이전 재집계에서 참고 문장 수정이 누락된 기사는 대기 목록에 없어도 기사 ID를 직접 지정해 다시 재집계할 수 있습니다.")
     refresh_message = st.session_state.pop("catalog_refresh_message", None)
     if refresh_message:
         st.success(refresh_message)
+    batch_result = st.session_state.pop("catalog_batch_result", None)
+    if batch_result:
+        if batch_result["completed"]:
+            st.success(f"{batch_result['completed']:,}기사 재집계를 마쳤습니다.")
+        if batch_result["failures"]:
+            st.warning(f"{len(batch_result['failures']):,}기사는 재집계하지 못했습니다. 성공한 기사는 반영되었으며, 실패한 기사는 대기 대상으로 남습니다.")
+            st.dataframe(pd.DataFrame(batch_result["failures"]), hide_index=True, width="stretch")
     try:
         presses = load_review_presses()
         if not presses:
             st.info("수정완료된 검수 문장이 없습니다.")
         else:
             press = st.selectbox("언론사", presses, key="catalog_review_press")
-            pending = load_pending_articles(press)
-            st.caption(f"최근 갱신 대기 {len(pending)}기사 표시 (한 번에 최대 25건)")
+            batch_size = st.selectbox(
+                "한 번에 처리할 기사 수", [50, 100, 250, 500], index=1,
+                key="catalog_refresh_batch_size", format_func=lambda value: f"{value:,}건",
+            )
+            pending = load_pending_articles(press, batch_size)
+            st.caption(f"이번 처리 대상 {len(pending):,}기사 · 최근 수정된 기사부터 최대 {batch_size:,}건 조회")
+            st.caption("기사별로 처리 결과를 저장합니다. 일괄처리 후 남은 대상을 이어서 처리할 수 있습니다.")
             st.dataframe(
                 pd.DataFrame(pending).rename(columns={"doc_id": "기사ID", "changed_at": "수정완료 시각"}),
                 hide_index=True,
                 width="stretch",
             )
-            doc_id = st.text_input("기사 ID 직접 지정", placeholder="재집계할 기사 ID")
             password = st.text_input("관리 비밀번호", type="password", key="catalog_refresh_password")
-            single, batch = st.columns(2)
-            if single.button("지정 기사 재집계", disabled=not doc_id.strip()):
-                count = refresh_article(doc_id.strip(), password)
-                st.session_state["catalog_refresh_message"] = f"{doc_id.strip()} · 개체명 출현 {count:,}건을 반영했습니다."
-                st.rerun()
-            if batch.button("대기 기사 25건 재집계", disabled=not pending):
-                with st.spinner("대기 기사를 재집계하고 있습니다."):
-                    for row in pending:
-                        refresh_article(row["doc_id"], password)
-                st.session_state["catalog_refresh_message"] = f"{len(pending)}기사 재집계를 마쳤습니다."
-                st.rerun()
+            if st.button(f"대기 기사 {len(pending):,}건 일괄 재집계", disabled=not pending, type="primary"):
+                if not check_admin_password(password):
+                    st.error("관리 비밀번호가 올바르지 않습니다.")
+                else:
+                    completed = 0
+                    failures = []
+                    progress = st.progress(0.0, text=f"0 / {len(pending):,}기사 처리")
+                    for index, row in enumerate(pending, start=1):
+                        try:
+                            refresh_article(row["doc_id"], password)
+                            completed += 1
+                        except Exception as exc:
+                            failures.append({"기사ID": row["doc_id"], "실패 사유": str(exc)})
+                        progress.progress(index / len(pending), text=f"{index:,} / {len(pending):,}기사 처리")
+                    st.session_state["catalog_batch_result"] = {"completed": completed, "failures": failures}
+                    st.rerun()
+            with st.expander("특정 기사 재처리"):
+                doc_id = st.text_input("기사 ID 직접 지정", placeholder="재집계할 기사 ID")
+                if st.button("지정 기사 재집계", disabled=not doc_id.strip()):
+                    count = refresh_article(doc_id.strip(), password)
+                    st.session_state["catalog_refresh_message"] = f"{doc_id.strip()} · 개체명 출현 {count:,}건을 반영했습니다."
+                    st.rerun()
     except Exception as exc:
         st.error(f"개체명 재집계 실패: {exc}")

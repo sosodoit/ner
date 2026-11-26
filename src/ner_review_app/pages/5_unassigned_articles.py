@@ -88,8 +88,8 @@ def load_article(doc_id):
     return rows
 
 
-st.title("배정 밖 기사 확인")
-st.caption("원본 기사 중 검수 배정표에 기사 ID가 없는 기사를 확인합니다. 목록은 20건씩 조회합니다.")
+# st.title("배정 밖 기사 확인")
+st.caption("원본 기사 중 검수 대상에 없는 기사를 확인합니다. 목록은 20건씩 조회합니다.")
 
 try:
     presses = load_presses()
