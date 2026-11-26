@@ -82,12 +82,11 @@ def render_review_statistics(data):
     with tab1:
         st.caption("완료율은 계엄기사·일괄처리·최종 오류의 완료 기사 수를 세 방식의 검수 대상 기사 수로 나눈 값입니다.")
         count_labels = {
-            "original_count": "원본기사", "martial_count": "계엄기사", "batch_count": "일괄처리",
-            "rule_count": "룰 검출 전체", "rule_error_count": "최종 오류", "rule_normal_count": "최종 정상",
-            "target_count": "검수 대상", "completed_count": "검수 완료", "incomplete_count": "검수 미완료",
+            "original_count": "원본기사", "martial_count": "계엄기사", "batch_count": "일괄처리", "rule_error_count": "휴먼검수",
+            "target_count": "전체검수대상", "completed_count": "전체검수완료", "incomplete_count": "전체검수미완료",
         }
         totals = summary[list(count_labels)].sum().to_dict()
-        display = pd.concat([pd.DataFrame([{"press": "전체 합계", **totals}]), summary], ignore_index=True)
+        display = pd.concat([pd.DataFrame([{"press": "전체합계", **totals}]), summary], ignore_index=True)
         display["완료율"] = (display["completed_count"].div(display["target_count"].replace(0, float("nan"))).fillna(0).mul(100).round(1))
         display = display[["press", *count_labels, "완료율"]].rename(columns={"press": "언론사", **count_labels})
         st.dataframe(display, width="stretch", hide_index=True, height=(len(display) + 1) * 35 + 3,
@@ -97,23 +96,29 @@ def render_review_statistics(data):
         for row in summary.itertuples(index=False):
             values = methods.loc[methods["press"] == row.press].set_index("review_method")
             values = values.reindex(METHOD_ORDER, fill_value=0)[["assigned_count", "target_count", "completed_count"]]
-            with st.expander(f"{row.press} · 원본 {row.original_count:,}기사 · 최종 휴먼검수 {row.target_count:,}기사"):
+            llm_target_count = int(values.loc["LLM검수", "assigned_count"])
+            with st.expander(f"{row.press} · 원본 {row.original_count:,}기사 · 최종휴먼검수 {row.target_count:,}기사"):
                 values["미완료 기사"] = values["target_count"] - values["completed_count"]
                 values["완료율"] = values["completed_count"].div(values["target_count"].replace(0, float("nan"))).fillna(0).mul(100)
-                values.index = values.index.map(METHOD_DISPLAY_NAMES).rename("검수 방식")
+                values.index = values.index.map(METHOD_DISPLAY_NAMES).rename("검수방식")
                 st.dataframe(values.reset_index().rename(columns={
-                    "assigned_count": "분류 기사(배정)", "target_count": "검수 대상", "completed_count": "완료 기사",
+                    "assigned_count": "검수대상", "target_count": "최종검수대상", "completed_count": "완료기사",
                 }), width="stretch", hide_index=True, column_config={
                     "완료율": st.column_config.ProgressColumn(min_value=0, max_value=100, format="%.1f%%")
                 })
-                st.caption(f"휴먼검수 판정 전체(룰 검출) {row.rule_count:,}기사 · 최종 오류 {row.rule_error_count:,}기사 · 최종 정상 {row.rule_normal_count:,}기사")
+                st.caption(
+                    f"룰검출전체 {row.rule_count:,}기사 − 1차정제 제외 {row.rule_count - llm_target_count:,}기사 "
+                    f"= LLM검수대상 {llm_target_count:,}기사(휴먼검수 행의 검수대상)입니다. "
+                    "LLM 판정 후 오류로 남은 기사가 휴먼검수의 최종검수대상입니다."
+                )
+                st.caption(f"룰검출전체 {row.rule_count:,}기사 = 최종오류 {row.rule_error_count:,}기사 + 최종정상 {row.rule_normal_count:,}기사")
 
     with tab3:
         #---------------------------------------------------------------------------------------------------------
         # 본문 - 담당자 배정
         #---------------------------------------------------------------------------------------------------------
         with st.container(border=True):
-            st.markdown("**배정 현황**")
+            st.markdown("**배정현황**")
             st.caption("배정 기사 수는 검수 방식별 기사ID 순차적으로 배정됩니다.")
 
             assignments = data["assignments"].copy()
