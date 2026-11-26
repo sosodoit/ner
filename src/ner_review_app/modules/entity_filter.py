@@ -85,10 +85,10 @@ def render_entity_filter(scope, load_page, key_prefix, inline_results=False):
                     else:
                         st.info("조건에 맞는 개체가 없습니다.")
                     previous, following = st.columns(2, gap="small")
-                    if previous.button("개체 이전", key=f"{key_prefix}_previous", disabled=len(starts) == 1, width="stretch"):
+                    if previous.button("이전", key=f"{key_prefix}_previous", disabled=len(starts) == 1, width="stretch"):
                         starts.pop()
                         st.rerun()
-                    if following.button("개체 다음", key=f"{key_prefix}_next", disabled=len(rows) <= ENTITY_PAGE_SIZE, width="stretch"):
+                    if following.button("다음", key=f"{key_prefix}_next", disabled=len(rows) <= ENTITY_PAGE_SIZE, width="stretch"):
                         last = visible[-1]
                         starts.append((last["mention_count"], last["entity_name"], last["entity_type"]))
                         st.rerun()
