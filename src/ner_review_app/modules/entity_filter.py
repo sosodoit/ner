@@ -9,7 +9,7 @@ from src.ner_review_app.modules.entity_catalog import catalog_ready
 ENTITY_PAGE_SIZE = 30
 
 
-def render_entity_filter(scope, load_page, key_prefix):
+def render_entity_filter(scope, load_page, key_prefix, inline_results=False):
     if st.session_state.get(f"{key_prefix}_scope") != scope:
         st.session_state[f"{key_prefix}_scope"] = scope
         st.session_state[f"{key_prefix}_selected"] = None
@@ -48,7 +48,7 @@ def render_entity_filter(scope, load_page, key_prefix):
         if not ready:
             st.info("개체명목록 화면에서 초기 준비를 완료한 뒤 사용할 수 있습니다.")
             return None
-        with st.form(f"{key_prefix}_search"):
+        with st.form(f"{key_prefix}_search", border=not inline_results):
             term = st.text_input(
                 "개체명·분류 검색", placeholder="개체명 또는 분류의 일부 입력",
                 key=f"{key_prefix}_name",
@@ -64,8 +64,9 @@ def render_entity_filter(scope, load_page, key_prefix):
         query = st.session_state[f"{key_prefix}_query"]
         if query is not None:
             starts = st.session_state[f"{key_prefix}_starts"]
-            with st.container(border=True):
-                st.markdown("**조회 결과에서 개체 선택**")
+            with st.container(border=not inline_results):
+                if not inline_results:
+                    st.markdown("**조회 결과에서 개체 선택**")
                 try:
                     rows = load_page(query[0], query[1] == "많은 순", starts[-1])
                     visible = rows[:ENTITY_PAGE_SIZE]
@@ -77,6 +78,7 @@ def render_entity_filter(scope, load_page, key_prefix):
                         choice = st.selectbox(
                             "검수할 개체명·분류", list(entities), key=choice_key,
                             format_func=lambda pair: f"{pair[0]} · {pair[1]} · 전체 {entities[pair]['mention_count']:,}회",
+                            label_visibility="collapsed" if inline_results else "visible",
                         )
                         if st.button("선택 개체로 조회", key=f"{key_prefix}_apply", width="stretch"):
                             st.session_state[f"{key_prefix}_selected"] = entities[choice]
