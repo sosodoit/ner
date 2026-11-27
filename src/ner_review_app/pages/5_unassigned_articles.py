@@ -20,6 +20,7 @@ if str(PROJECT_ROOT) not in sys.path:
 from src.ner_review_app.modules.postgredb import get_postgre_connect
 from src.ner_review_app.modules.entity_filter import ENTITY_PAGE_SIZE, render_entity_filter
 from src.ner_review_app.modules.entity_catalog import entity_search_pattern
+from src.ner_review_app.modules.entity_tags import ENTITY_TAG_PATTERN
 from src.ner_review_app.modules._article_list_state import get_article_list_state, remember_article_filters, render_article_selector
 
 
@@ -27,7 +28,7 @@ from src.ner_review_app.modules._article_list_state import get_article_list_stat
 # 기본 설정 - 페이지 크기 및 개체 태그 패턴
 #---------------------------------------------------------------------------------------------------------
 PAGE_SIZE = 10
-TAG_PATTERN = re.compile(r"<\s*([^<>:]+?)\s*:\s*([^<>]+?)\s*>")
+TAG_PATTERN = re.compile(ENTITY_TAG_PATTERN)
 
 
 #---------------------------------------------------------------------------------------------------------
@@ -48,16 +49,42 @@ def load_presses():
 #---------------------------------------------------------------------------------------------------------
 # 기능 - 배정 밖 기사의 개체 목록 조회
 #---------------------------------------------------------------------------------------------------------
+def sample_search_conditions(search_text):
+    """넓은 ID 검색은 기사 색인, 구체적인 부분 검색은 GIN 색인으로 조회한다."""
+    text = search_text.strip()
+    if not text:
+        return "TRUE", "TRUE", []
+    pattern = f"%{text}%"
+    sentence_id = re.fullmatch(r"([A-Za-z]+\d+\.\d+)(?:\.\d+)+", text)
+    if sentence_id:
+        # 문장 ID의 앞 두 구간은 기사 ID이므로, 해당 기사 안에서만 부분 검색한다.
+        return """(d.doc_id ILIKE %s AND
+            (d.doc_id ILIKE %s OR d.sentence_id ILIKE %s))""", "TRUE", [sentence_id[1], pattern, pattern]
+    article_id = re.fullmatch(r"[A-Za-z]+\d+\.(\d+)(?:\.\d+)*", text)
+    broad_search = (
+        len(text) < 4
+        or (article_id is not None and len(article_id[1]) < 4)
+        or re.fullmatch(r"[A-Za-z]+\d*", text) is not None
+    )
+    if broad_search:
+        # 기사 ID 비교로 먼저 찾고, 필요한 기사만 기본키 색인으로 문장 ID를 확인한다.
+        # OFFSET 0은 전체 문장 테이블을 읽는 해시 서브쿼리로의 변환을 막는다.
+        condition = """(c.doc_id ILIKE %s OR EXISTS (
+            SELECT 1 FROM public.ner_documents search_sentence
+            WHERE search_sentence.doc_id = c.doc_id AND search_sentence.sentence_id ILIKE %s
+            OFFSET 0
+        ))"""
+        return "TRUE", condition, [pattern, pattern]
+    return "(d.doc_id ILIKE %s OR d.sentence_id ILIKE %s)", "TRUE", [pattern, pattern]
+
+
 @st.cache_data(ttl=900, max_entries=64, show_spinner=False)
 def load_entity_page(press, entity_type, entity_search="", frequent_first=True, after=None, article_search=""):
     """빈도표에서 현재 언론사의 배정 밖 기사에 있는 개체 쌍만 찾는다."""
     location_conditions = []
     conditions = []
-    params = [press]
-    document_condition = "publisher = %s"
-    if article_search.strip():
-        document_condition += " AND (doc_id ILIKE %s OR sentence_id ILIKE %s)"
-        params.extend([f"%{article_search.strip()}%"] * 2)
+    document_search, article_condition, search_params = sample_search_conditions(article_search)
+    params = [press, *search_params]
     if entity_type:
         location_conditions.append("l.entity_type = %s")
         params.append(entity_type)
@@ -70,30 +97,55 @@ def load_entity_page(press, entity_type, entity_search="", frequent_first=True, 
         conditions.append(f"(f.mention_count, f.entity_name, f.entity_type) {comparison} (%s, %s, %s)")
         params.extend(after)
     params.append(ENTITY_PAGE_SIZE + 1)
+    article_ctes = f"""
+        candidate_docs AS NOT MATERIALIZED (
+            SELECT DISTINCT d.doc_id FROM public.ner_documents d
+            WHERE d.publisher = %s AND {document_search}
+        ), sample_docs AS MATERIALIZED (
+            SELECT c.doc_id FROM candidate_docs c
+            WHERE NOT EXISTS (SELECT 1 FROM public.ner_human_review h WHERE h.doc_id = c.doc_id)
+              AND {article_condition}
+        )
+    """
+    if document_search == "TRUE":
+        # 후보 기사가 많으면 모든 출현 위치를 합쳐 정렬하지 않고, 빈도순으로
+        # 개체를 읽으며 대상 기사에 출현하는지 확인해 한 페이지에서 멈춘다.
+        query = f"""
+            WITH {article_ctes}
+            SELECT f.entity_name, f.entity_type, f.mention_count
+            FROM public.ner_entity_frequency f
+            WHERE {" AND ".join(location_conditions).replace('l.', 'f.') or "TRUE"}
+              AND {" AND ".join(conditions) or "TRUE"}
+              AND EXISTS (SELECT 1 FROM sample_docs)
+              AND EXISTS (
+                  SELECT 1 FROM public.ner_entity_location l
+                  WHERE l.entity_name = f.entity_name AND l.entity_type = f.entity_type
+                    AND l.doc_id IN (SELECT doc_id FROM sample_docs)
+                  OFFSET 0
+              )
+            ORDER BY f.mention_count {direction}, f.entity_name {direction}, f.entity_type {direction}
+            LIMIT %s
+        """
+    else:
+        query = f"""
+            WITH {article_ctes}, scoped_entities AS MATERIALIZED (
+                SELECT DISTINCT l.entity_name, l.entity_type
+                FROM sample_docs c
+                JOIN public.ner_entity_location l ON l.doc_id = c.doc_id
+                WHERE {" AND ".join(location_conditions) or "TRUE"}
+            )
+            SELECT f.entity_name, f.entity_type, f.mention_count
+            FROM scoped_entities e
+            JOIN public.ner_entity_frequency f USING (entity_name, entity_type)
+            WHERE {" AND ".join(conditions) or "TRUE"}
+            ORDER BY f.mention_count {direction}, f.entity_name {direction}, f.entity_type {direction}
+            LIMIT %s
+        """
     with get_postgre_connect() as conn:
         with conn.cursor() as cursor:
             cursor.execute("SET TRANSACTION READ ONLY")
             cursor.execute("SET LOCAL statement_timeout = '15s'")
-            return cursor.execute(
-                f"""
-                WITH candidate_docs AS MATERIALIZED (
-                    SELECT DISTINCT doc_id FROM public.ner_documents WHERE {document_condition}
-                ), scoped_entities AS MATERIALIZED (
-                    SELECT DISTINCT l.entity_name, l.entity_type
-                    FROM candidate_docs c
-                    JOIN public.ner_entity_location l ON l.doc_id = c.doc_id
-                    WHERE NOT EXISTS (SELECT 1 FROM public.ner_human_review h WHERE h.doc_id = c.doc_id)
-                      AND {" AND ".join(location_conditions) or "TRUE"}
-                )
-                SELECT f.entity_name, f.entity_type, f.mention_count
-                FROM scoped_entities e
-                JOIN public.ner_entity_frequency f USING (entity_name, entity_type)
-                WHERE {" AND ".join(conditions) or "TRUE"}
-                ORDER BY f.mention_count {direction}, f.entity_name {direction}, f.entity_type {direction}
-                LIMIT %s
-                """,
-                params,
-            ).fetchall()
+            return cursor.execute(query, params).fetchall()
 
 
 #---------------------------------------------------------------------------------------------------------
@@ -102,12 +154,14 @@ def load_entity_page(press, entity_type, entity_search="", frequent_first=True, 
 @st.cache_data(ttl=600, max_entries=64, show_spinner=False)
 def load_article_page(press, after_doc_id, entity_type=None, selected_entity=None, search_text=""):
     """기사·문장 ID 부분 검색과 개체 조건을 함께 적용해 기사 ID 순서로 조회한다."""
+    # 부분 검색에는 ner_document_search_indexes.sql의 GIN 인덱스를 사용한다.
+    # 후보를 강제 구체화하지 않아 첫 페이지의 LIMIT까지 인덱스 조회를 유지한다.
     document_conditions = ["d.publisher = %s", "d.doc_id > %s"]
     conditions = ["NOT EXISTS (SELECT 1 FROM public.ner_human_review h WHERE h.doc_id = c.doc_id)"]
-    params = [press, after_doc_id]
-    if search_text.strip():
-        document_conditions.append("(d.doc_id ILIKE %s OR d.sentence_id ILIKE %s)")
-        params.extend([f"%{search_text.strip()}%"] * 2)
+    document_search, article_condition, search_params = sample_search_conditions(search_text)
+    document_conditions.append(document_search)
+    conditions.append(article_condition)
+    params = [press, after_doc_id, *search_params]
     if entity_type or selected_entity:
         location_conditions = ["l.doc_id = c.doc_id"]
         if entity_type:
@@ -124,7 +178,7 @@ def load_article_page(press, after_doc_id, entity_type=None, selected_entity=Non
             cursor.execute("SET LOCAL statement_timeout = '15s'")
             rows = cursor.execute(
                 f"""
-                WITH candidates AS MATERIALIZED (
+                WITH candidates AS NOT MATERIALIZED (
                     SELECT DISTINCT d.doc_id FROM public.ner_documents d
                     WHERE {" AND ".join(document_conditions)}
                 )

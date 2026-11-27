@@ -93,15 +93,23 @@ with catalog_tab:
     # 개체명 조회 - 검색 조건 및 페이지 초기화
     #---------------------------------------------------------------------------------------------------------
     entity_search = st.text_input("개체명 · 분류 검색", placeholder="개체명 또는 분류의 일부 입력").strip()
-    if st.session_state.get("catalog_search") != entity_search:
+    entity_type = st.selectbox("분류", ["전체", "PS", "LC", "OG", "AF", "DT", "EV"])
+    if (
+        st.session_state.get("catalog_search") != entity_search
+        or st.session_state.get("catalog_entity_type") != entity_type
+    ):
         st.session_state["catalog_search"] = entity_search
+        st.session_state["catalog_entity_type"] = entity_type
         st.session_state["catalog_page_starts"] = [None]
     starts = st.session_state["catalog_page_starts"]
     #---------------------------------------------------------------------------------------------------------
     # 개체명 조회 - 출현빈도 목록 표시
     #---------------------------------------------------------------------------------------------------------
     try:
-        rows = load_catalog_page(starts[-1], entity_search, 51)
+        rows = load_catalog_page(
+            starts[-1], entity_search, 51,
+            entity_type=None if entity_type == "전체" else entity_type,
+        )
         visible = rows[:50]
         st.dataframe(
             pd.DataFrame(visible).rename(columns={

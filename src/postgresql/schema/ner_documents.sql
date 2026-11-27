@@ -30,3 +30,7 @@ CREATE TABLE IF NOT EXISTS ner_documents (
 
 CREATE INDEX IF NOT EXISTS idx_ner_documents_publisher
     ON ner_documents (publisher);
+
+-- 언론사별 기사 목록을 본문 접근 없이 순서대로 조회한다.
+CREATE INDEX IF NOT EXISTS idx_ner_documents_publisher_doc_id
+    ON ner_documents (publisher, doc_id);

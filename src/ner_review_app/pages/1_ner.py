@@ -18,6 +18,7 @@ from src.ner_review_app.modules.postgredb import get_postgre_connect
 from src.ner_review_app.modules.review_rows import load_review_rows, review_cache_version, invalidate_review_rows
 from src.ner_review_app.modules.entity_filter import ENTITY_PAGE_SIZE, render_entity_filter
 from src.ner_review_app.modules.entity_catalog import entity_search_pattern
+from src.ner_review_app.modules.entity_tags import ENTITY_TAG_PATTERN
 from src.ner_review_app.modules.review_targets import HUMAN_REVIEW_METHOD, METHOD_DISPLAY_NAMES, REVIEW_SCOPE_CTES
 from src.ner_review_app.modules.review_statistics import load_review_data
 from src.ner_review_app.modules._article_list_state import get_article_list_state, remember_article_filters, render_article_selector
@@ -168,7 +169,7 @@ RULE_NAMES = {
 #---------------------------------------------------------------------------------------------------------
 ERROR_TYPES = tuple(ERROR_TYPE_NAMES)
 PAGE_SIZE = 10
-TAGGED_ENTITY_PATTERN = re.compile(r"<\s*([^<>:]+?)\s*:\s*([^<>]+?)\s*>")
+TAGGED_ENTITY_PATTERN = re.compile(ENTITY_TAG_PATTERN)
 REVIEWER_CREDENTIAL_ENV_PREFIX = "NER_REVIEWER_"
 REVIEWER_QUERY_PARAM = "reviewer"
 REVIEWER_TOKEN_QUERY_PARAM = "reviewer_token"
@@ -311,10 +312,9 @@ def highlighted_tag_spans(form, matches):
             for match in re.finditer(re.escape(pattern), form)
         )
 
-    tag_pattern = re.compile(r"<([^<>:]+?)\s*:\s*[^<>]+?>")
     return [
         match.span()
-        for match in tag_pattern.finditer(form)
+        for match in TAGGED_ENTITY_PATTERN.finditer(form)
         if any(
             tag_start < highlighted_end and highlighted_start < tag_end
             for highlighted_start, highlighted_end in highlighted_spans
@@ -817,15 +817,13 @@ def review_list_ctes(
 def fetch_review_entities(
     selected_press, data_versions, selected_types, review_method, assignee,
     search_text, response_review_needed, response_review_status,
-    completion_status="전체",
     entity_search="", frequent_first=True, after=None,
-    cache_version=0,
 ):
-    """전체 빈도를 재집계하지 않고 내 검수대상에 출현하는 개체 쌍을 30개씩 찾는다."""
+    """완료 상태와 무관하게 내 검수대상의 개체 쌍을 30개씩 찾는다."""
     scope_ctes, params = review_list_ctes(
         selected_press, data_versions, selected_types, review_method, assignee,
         search_text, response_review_needed, response_review_status,
-        completion_status,
+        "전체",
     )
     conditions = []
     location_condition = "TRUE"
@@ -867,7 +865,6 @@ def select_review_entity(scope_args, key_prefix):
         scope_args,
         lambda term, frequent_first, after: fetch_review_entities(
             *scope_args, term, frequent_first, after,
-            cache_version=review_cache_version(scope_args[0], scope_args[4]),
         ),
         key_prefix,
     )
@@ -1586,7 +1583,7 @@ selected_rules = rules_for_error_types(selected_types)
 priority_entity = select_review_entity((
     selected_press, tuple(press_versions[selected_press]), selected_types,
     selected_review_method, authenticated_assignee, search_text,
-    response_review_needed, response_review_status, completion_status,
+    response_review_needed, response_review_status,
 ), entity_filter_prefix)
 selected_entity = (
     (priority_entity["entity_name"], priority_entity["entity_type"])

@@ -120,10 +120,14 @@ def load_review_data():
             WHERE s.review_method <> 'LLM검수'
                OR (r.final_result = 'error' AND s.human_error)
         ), postprocessed_articles AS (
-            SELECT press, doc_id,
-                   BOOL_AND(review_status IS NOT DISTINCT FROM '완료') AS completed
-            FROM public.ner_human_review_add
-            GROUP BY press, doc_id
+            SELECT a.press, a.doc_id,
+                   BOOL_AND(a.review_status IS NOT DISTINCT FROM '완료') AS completed
+            FROM public.ner_human_review_add a
+            -- 버전·언론사·검수방식과 무관하게 기존 검수 기사 ID가 있으면 제외한다.
+            WHERE NOT EXISTS (
+                SELECT 1 FROM public.ner_human_review h WHERE h.doc_id = a.doc_id
+            )
+            GROUP BY a.press, a.doc_id
         )
         SELECT o.press, COUNT(*) AS original_count,
                COUNT(t.doc_id) AS target_count,

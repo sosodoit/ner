@@ -6,6 +6,7 @@
 import os
 from psycopg import sql
 from src.ner_review_app.modules.postgredb import get_postgre_connect
+from src.ner_review_app.modules.entity_tags import ENTITY_TAG_PATTERN
 
 
 #---------------------------------------------------------------------------------------------------------
@@ -65,15 +66,16 @@ ENTITY_SOURCE_CTE_SQL = r"""
 #---------------------------------------------------------------------------------------------------------
 # 공통 쿼리 - 최종 문장의 개체명 출현 목록 적재
 #---------------------------------------------------------------------------------------------------------
-ENTITY_MENTIONS_INSERT_SQL = ENTITY_SOURCE_CTE_SQL + r"""
+ENTITY_MENTIONS_INSERT_SQL = ENTITY_SOURCE_CTE_SQL + rf"""
     INSERT INTO public.ner_entity_mentions
         (press_id, file_id, doc_id, paragraph_id, sentence_id,
          topic, form, final_form, entity_name, entity_type)
     SELECT s.press_id, s.file_id, s.doc_id, s.paragraph_id,
-           s.sentence_id, s.topic, s.form, s.final_form, m[1], m[2]
+           s.sentence_id, s.topic, s.form, s.final_form,
+           regexp_replace(m[1], '^\s+|\s+$', '', 'g'), m[2]
     FROM source s
     CROSS JOIN LATERAL regexp_matches(
-        s.final_form, '<\s*([^<>:]+?)\s*:\s*([^<>]+?)\s*>', 'g'
+        s.final_form, '{ENTITY_TAG_PATTERN}', 'g'
     ) m
 """
 
@@ -159,9 +161,12 @@ def entity_search_pattern(value):
 #---------------------------------------------------------------------------------------------------------
 # 데이터 조회 - 개체명 출현빈도 목록 및 페이지 이동
 #---------------------------------------------------------------------------------------------------------
-def load_catalog_page(after=None, search_text="", limit=50):
+def load_catalog_page(after=None, search_text="", limit=50, entity_type=None):
     conditions = []
     params = []
+    if entity_type:
+        conditions.append("entity_type = %s")
+        params.append(entity_type)
     if search_text.strip():
         conditions.append("(entity_name ILIKE %s OR entity_type ILIKE %s)")
         params.extend([entity_search_pattern(search_text)] * 2)
