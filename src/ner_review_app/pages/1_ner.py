@@ -15,7 +15,7 @@ import streamlit as st
 #---------------------------------------------------------------------------------------------------------
 from src.ner_review.response_input import ENTITY_PATTERN
 from src.ner_review_app.modules.postgredb import get_postgre_connect
-from src.ner_review_app.modules.review_rows import load_review_rows
+from src.ner_review_app.modules.review_rows import load_review_rows, review_cache_version, invalidate_review_rows
 from src.ner_review_app.modules.entity_filter import ENTITY_PAGE_SIZE, render_entity_filter
 from src.ner_review_app.modules.entity_catalog import entity_search_pattern
 from src.ner_review_app.modules.review_targets import HUMAN_REVIEW_METHOD, METHOD_DISPLAY_NAMES, REVIEW_SCOPE_CTES
@@ -450,10 +450,13 @@ def save_review_page(review_updates, assignee, status_changed=True):
     with get_postgre_connect() as conn:
         with conn.cursor() as cursor:
             cursor.executemany(query, [(*update, assignee) for update in review_updates])
-    load_review_rows.clear()
+    for press in {update[5] for update in review_updates}:
+        invalidate_review_rows(
+            press, assignee, {update[6] for update in review_updates if update[5] == press},
+            status_changed=status_changed,
+        )
     if status_changed:
         load_review_data.clear()
-        fetch_review_entities.clear()
 
 
 def save_review_item(item, assignee, modified_form, review_status):
@@ -516,7 +519,7 @@ def save_review_add_item(item, assignee, modified_form, review_status):
                 review_status,
             ),
         )
-    load_review_rows.clear()
+    invalidate_review_rows(item["press"], assignee, [item["doc_id"]], status_changed=False)
 
 
 #---------------------------------------------------------------------------------------------------------
@@ -626,7 +629,7 @@ def review_filter_ctes(press, data_versions, selected_types, review_needed, revi
     params.extend([list(data_versions), press])
     if doc_id is not None:
         params.append(doc_id)
-    params.extend(response_params)
+    params.extend(response_params * 4)
     validation_failed = "COALESCE(STRPOS(v.reason, '[자동검증 실패]'), 0) > 0"
     allow_rule_fallback = review_needed == "전체" and review_status in ("전체", "error")
     query = f"""
@@ -654,30 +657,28 @@ def review_filter_ctes(press, data_versions, selected_types, review_needed, revi
         ), filtered_responses AS (
             SELECT v.* FROM review_source AS v
             WHERE {response_condition}
+        ), response_matches AS (
+            SELECT v.data_version, v.doc_id, v.sentence_id, v.entity_id,
+                   GROUPING(v.entity_id) AS sentence_level,
+                   COUNT(*) FILTER (WHERE {response_condition}) AS matched_count,
+                   CASE WHEN NOT BOOL_OR(v.validation_failed) FILTER (WHERE {response_condition})
+                        THEN ARRAY_AGG(DISTINCT v.error_lv1) FILTER (WHERE {response_condition})
+                   END AS response_error_types
+            FROM review_source v
+            GROUP BY GROUPING SETS (
+                (v.data_version, v.doc_id, v.sentence_id, v.entity_id),
+                (v.data_version, v.doc_id, v.sentence_id)
+            )
         ), matched_rules AS (
-            SELECT r.*, (
-                SELECT CASE WHEN NOT BOOL_OR(v.validation_failed)
-                            THEN ARRAY_AGG(DISTINCT v.error_lv1) END
-                FROM filtered_responses AS v
-                WHERE v.data_version = r.data_version
-                  AND v.doc_id = r.doc_id AND v.sentence_id = r.sentence_id
-                  AND (v.entity_id = r.entity_id OR r.entity_id IS NULL)
-            ) AS response_error_types
+            SELECT r.*, m.response_error_types
             FROM candidate_rules AS r
-            WHERE (
-                  EXISTS (
-                      SELECT 1 FROM filtered_responses AS v
-                      WHERE v.data_version = r.data_version
-                        AND v.doc_id = r.doc_id AND v.sentence_id = r.sentence_id
-                        AND (v.entity_id = r.entity_id OR r.entity_id IS NULL)
-                  )
-                  OR ({'TRUE' if allow_rule_fallback else 'FALSE'} AND NOT EXISTS (
-                      SELECT 1 FROM review_source AS v
-                      WHERE v.data_version = r.data_version
-                        AND v.doc_id = r.doc_id AND v.sentence_id = r.sentence_id
-                        AND (v.entity_id = r.entity_id OR r.entity_id IS NULL)
-                  ))
-              )
+            LEFT JOIN response_matches m
+              ON m.data_version = r.data_version AND m.doc_id = r.doc_id
+             AND m.sentence_id = r.sentence_id
+             AND ((r.entity_id IS NULL AND m.sentence_level = 1)
+                  OR (r.entity_id = m.entity_id AND m.sentence_level = 0))
+            WHERE m.matched_count > 0
+               OR ({'TRUE' if allow_rule_fallback else 'FALSE'} AND m.doc_id IS NULL)
         )
     """
     return query, params
@@ -751,13 +752,14 @@ def review_list_ctes(
     response_review_status="전체",
     completion_status="전체",
     retained_doc_id=None,
+    doc_id=None,
 ):
     """기사 목록과 개체 선택 목록에 동일한 배정·검수 조건을 적용한다."""
     result_filter = response_review_status if response_review_status in ("error", "normal") else "전체"
     filter_ctes, params = review_filter_ctes(
-        selected_press, data_versions, selected_types, response_review_needed, result_filter,
+        selected_press, data_versions, selected_types, response_review_needed, result_filter, doc_id,
     )
-    params.extend([selected_press, list(data_versions), None])
+    params.extend([selected_press, list(data_versions), doc_id])
     category = []
     if review_method == HUMAN_REVIEW_METHOD:
         category.append("""((ra.final_result = 'error' AND s.human_error)
@@ -774,7 +776,7 @@ def review_list_ctes(
     filters = ["s.assignee = %s"]
     params.append(assignee)
     if completion_status != "전체":
-        filters.append("(a.article_completed = %s OR s.doc_id = %s)")
+        filters.append("(s.article_completed = %s OR s.doc_id = %s)")
         params.extend([completion_status == "완료", retained_doc_id])
     if search_text.strip():
         filters.append("(s.doc_id ILIKE %s OR s.sentence_id ILIKE %s)")
@@ -795,13 +797,12 @@ def review_list_ctes(
                                       AND s.review_method = 'LLM검수'
             WHERE {" AND ".join(category) or "TRUE"}
         ), assigned_article_status AS (
-            SELECT press, doc_id,
-                   BOOL_AND(review_status IS NOT DISTINCT FROM '완료') AS article_completed
+            SELECT eligible.*,
+                   BOOL_AND(review_status IS NOT DISTINCT FROM '완료')
+                       OVER (PARTITION BY press, doc_id) AS article_completed
             FROM eligible WHERE assignee = %s
-            GROUP BY press, doc_id
         ), filtered AS (
-            SELECT s.*, a.article_completed FROM eligible s
-            JOIN assigned_article_status a USING (press, doc_id)
+            SELECT s.* FROM assigned_article_status s
             WHERE {" AND ".join(filters)}
         )
     """
@@ -817,6 +818,7 @@ def fetch_review_entities(
     search_text, response_review_needed, response_review_status,
     completion_status="전체",
     entity_search="", frequent_first=True, after=None,
+    cache_version=0,
 ):
     """전체 빈도를 재집계하지 않고 내 검수대상에 출현하는 개체 쌍을 30개씩 찾는다."""
     scope_ctes, params = review_list_ctes(
@@ -862,7 +864,10 @@ def fetch_review_entities(
 def select_review_entity(scope_args, key_prefix):
     return render_entity_filter(
         scope_args,
-        lambda term, frequent_first, after: fetch_review_entities(*scope_args, term, frequent_first, after),
+        lambda term, frequent_first, after: fetch_review_entities(
+            *scope_args, term, frequent_first, after,
+            cache_version=review_cache_version(scope_args[0], scope_args[4]),
+        ),
         key_prefix,
     )
 
@@ -876,12 +881,11 @@ def fetch_rule_results(
     response_review_needed="전체", response_review_status="전체", selected_entity=None,
     completion_status="전체", retained_doc_id=None,
 ):
-    """개체 선택은 기사에만 적용하고 해당 기사의 다른 검수대상 문장도 유지한다."""
-    selected_rules = rules_for_error_types(selected_types)
+    """본문 없이 기사 색인을 캐시하고 페이지·완료 조건은 색인에 적용한다."""
     scope_ctes, params = review_list_ctes(
         selected_press, data_versions, selected_types, review_method, assignee,
         search_text, response_review_needed, response_review_status,
-        completion_status, retained_doc_id,
+        "전체",
     )
     entity_condition = "TRUE"
     if selected_entity is not None:
@@ -891,13 +895,6 @@ def fetch_rule_results(
               AND l.entity_name = %s AND l.entity_type = %s
         )"""
         params.extend(selected_entity)
-    params.extend([limit, offset, retained_doc_id])
-    rule_source = "matched_rules" if review_method == HUMAN_REVIEW_METHOD else "candidate_rules"
-    rule_types = "r.response_error_types" if rule_source == "matched_rules" else "NULL::text[]"
-    rule_columns = [
-        f'r."{column}"' for rule in selected_rules
-        for column in ([rule] if rule == "EXT_S003" else [rule, f"{rule}_PATTERN"])
-    ]
     if review_method == HUMAN_REVIEW_METHOD:
         press_counts = """SELECT COUNT(*) AS press_article_count,
                                  COUNT(*) FILTER (WHERE final_result = 'error') AS final_errors
@@ -905,37 +902,65 @@ def fetch_rule_results(
     else:
         press_counts = "SELECT COUNT(DISTINCT doc_id) AS press_article_count, 0 AS final_errors FROM eligible"
     query = f"""
-        WITH {scope_ctes}, filtered_docs AS (
-            SELECT DISTINCT s.doc_id FROM filtered s WHERE {entity_condition}
-        ), page_docs AS (
-            SELECT doc_id FROM (
-                SELECT doc_id FROM filtered_docs
-                ORDER BY SUBSTRING(doc_id FROM '(?:^|[.])([0-9]+)$')::numeric NULLS LAST, doc_id
-                LIMIT %s OFFSET %s
-            ) current_page
-            UNION
-            SELECT doc_id FROM filtered_docs WHERE doc_id = %s
+        WITH {scope_ctes}, entity_docs AS (
+            SELECT s.*, BOOL_OR({entity_condition}) OVER (PARTITION BY s.doc_id) AS entity_matches
+            FROM filtered s
         ), counts AS (
             {press_counts}
-        ), page_rows AS (
-            SELECT s.*, h.original_form, h.modified_form, h.is_modified,
-                   r.entity_id, r.entity_tagging, {rule_types} AS response_error_types,
-                   d.detected_entities, d.candidate_rule_ids, d.tagging_error_result, d.tagging_merge_result
-                   {"," + ", ".join(rule_columns) if rule_columns else ""}
-            FROM page_docs p JOIN filtered s USING (doc_id)
-            JOIN public.ner_human_review h USING (data_version, press, doc_id, sentence_id)
-            LEFT JOIN {rule_source} r ON r.data_version = s.data_version
-              AND r.doc_id = s.doc_id AND r.sentence_id = s.sentence_id
-            LEFT JOIN public.ner_decision_results d ON d.data_version = s.data_version AND d.press = s.press
-              AND d.doc_id = s.doc_id AND d.sentence_id = s.sentence_id
+        ), articles AS (
+            SELECT s.data_version, s.press, s.doc_id, s.final_result,
+                   s.article_completed, MIN(s.sentence_id) AS sentence_id
+            FROM entity_docs s WHERE s.entity_matches
+            GROUP BY s.data_version, s.press, s.doc_id, s.final_result, s.article_completed
         )
-        SELECT p.*, c.*, (SELECT COUNT(*) FROM filtered_docs) AS filtered_article_count
-        FROM counts c LEFT JOIN page_rows p ON TRUE
-        ORDER BY p.doc_id, p.data_version, p.sentence_id, p.entity_id
+        SELECT a.*, c.* FROM counts c LEFT JOIN articles a ON TRUE
+        ORDER BY SUBSTRING(a.doc_id FROM '(?:^|[.])([0-9]+)$')::numeric NULLS LAST,
+                 a.doc_id, a.data_version
     """
-    rows = load_review_rows(query, params)
-    return ([row for row in rows if row["doc_id"] is not None],
-            rows[0]["filtered_article_count"], rows[0]["press_article_count"], rows[0]["final_errors"])
+    rows = load_review_rows(query, params, review_cache_version(selected_press, assignee))
+    matching = [row for row in rows if row["doc_id"] is not None and (
+        completion_status == "전체" or row["article_completed"] == (completion_status == "완료")
+        or row["doc_id"] == retained_doc_id
+    )]
+    doc_ids = list(dict.fromkeys(row["doc_id"] for row in matching))
+    page_ids = set(doc_ids[offset:offset + limit])
+    if retained_doc_id in doc_ids:
+        page_ids.add(retained_doc_id)
+    return ([row for row in matching if row["doc_id"] in page_ids],
+            len(doc_ids), rows[0]["press_article_count"], rows[0]["final_errors"])
+
+
+def fetch_review_details(
+    selected_press, data_versions, selected_types, doc_id,
+    review_method, assignee, search_text, response_review_needed, response_review_status,
+):
+    """목록과 동일한 문장 조건으로 선택 기사의 본문·룰·판정만 조회한다."""
+    scope_ctes, params = review_list_ctes(
+        selected_press, data_versions, selected_types, review_method, assignee,
+        search_text, response_review_needed, response_review_status, doc_id=doc_id,
+    )
+    selected_rules = rules_for_error_types(selected_types)
+    rule_source = "matched_rules" if review_method == HUMAN_REVIEW_METHOD else "candidate_rules"
+    rule_types = "r.response_error_types" if rule_source == "matched_rules" else "NULL::text[]"
+    rule_columns = [
+        f'r."{column}"' for rule in selected_rules
+        for column in ([rule] if rule == "EXT_S003" else [rule, f"{rule}_PATTERN"])
+    ]
+    query = f"""
+        WITH {scope_ctes}
+        SELECT s.*, h.original_form, h.modified_form, h.is_modified,
+               r.entity_id, r.entity_tagging, {rule_types} AS response_error_types,
+               d.detected_entities, d.candidate_rule_ids, d.tagging_error_result, d.tagging_merge_result
+               {"," + ", ".join(rule_columns) if rule_columns else ""}
+        FROM filtered s
+        JOIN public.ner_human_review h USING (data_version, press, doc_id, sentence_id)
+        LEFT JOIN {rule_source} r ON r.data_version = s.data_version
+          AND r.doc_id = s.doc_id AND r.sentence_id = s.sentence_id
+        LEFT JOIN public.ner_decision_results d ON d.data_version = s.data_version AND d.press = s.press
+          AND d.doc_id = s.doc_id AND d.sentence_id = s.sentence_id
+        ORDER BY s.doc_id, s.data_version, s.sentence_id, r.entity_id
+    """
+    return load_review_rows(query, params, review_cache_version(selected_press, doc_id=doc_id))
 
 
 #---------------------------------------------------------------------------------------------------------
@@ -1113,6 +1138,7 @@ def fetch_article_sentences(
     return load_review_rows(
         query,
         (*filter_params, press, [data_version], doc_id, data_version, press, assignee, doc_id, selected_review_method),
+        review_cache_version(press, doc_id=doc_id),
     )
 
 
@@ -1749,35 +1775,8 @@ if offset and not page_doc_ids:
     st.rerun()
 
 #---------------------------------------------------------------------------------------------------------
-# 화면 상태 - 현재 페이지 문장의 검수 상태 복원
-#---------------------------------------------------------------------------------------------------------
-# 현재 페이지에 실제 표시되는 문장의 임시 검수 상태와 수정문을 초기화한다.
-visible_sentence_keys = [
-    sentence_key
-    for doc_key in docs
-    for sentence_key in docs[doc_key]
-]
-for sentence_key in visible_sentence_keys:
-    item = grouped[sentence_key]
-    status_key = review_widget_key("review_status", sentence_key)
-    modified_key = review_widget_key("modified_form", sentence_key)
-    if status_key not in st.session_state:
-        st.session_state[status_key] = item.get("review_status") or "미완료"
-    value_key = review_value_key(sentence_key)
-    if value_key not in st.session_state:
-        st.session_state[value_key] = item.get("modified_form") or item.get("original_form") or ""
-    # text_area 위젯은 기사 전환 시 제거될 수 있으므로 매 렌더링마다 영속 상태에서 복원한다.
-    st.session_state[modified_key] = st.session_state[value_key]
-
-#---------------------------------------------------------------------------------------------------------
 # 좌측 사이드바 - 검수 기사 목록 및 페이지 이동
 #---------------------------------------------------------------------------------------------------------
-page_sentence_keys = visible_sentence_keys
-all_page_completed = bool(page_sentence_keys) and all(
-    st.session_state.get(review_widget_key("review_status", sentence_key)) == "완료"
-    for sentence_key in page_sentence_keys
-)
-
 st.sidebar.markdown(f'**내 검수 기사 목록 <code style="color:#475569;">{filtered_article_count:,}</code>**', unsafe_allow_html=True)
 
 if page_doc_ids:
@@ -1801,6 +1800,34 @@ else:
     st.info("현재 조회 조건에 맞는 기사가 없습니다.")
 
 if selected_doc_key is not None:
+    # 일괄처리만 현재 페이지 전체를 적재하고, 개별 검수는 선택 기사만 적재한다.
+    detail_doc_ids = page_doc_ids if selected_review_method == BATCH_REVIEW_METHOD else [selected_id]
+    try:
+        detail_rows = [
+            row for doc_id in detail_doc_ids
+            for row in fetch_review_details(
+                selected_press, press_versions[selected_press], selected_types, doc_id,
+                selected_review_method, authenticated_assignee, search_text,
+                response_review_needed, response_review_status,
+            )
+        ]
+    except Exception as exc:
+        st.error(f"검수 문장 조회 실패: {exc}")
+        st.stop()
+    grouped = group_sentences(detail_rows, selected_rules)
+    docs = {}
+    for sentence_key in grouped:
+        docs.setdefault(sentence_key[:2], []).append(sentence_key)
+    for sentence_key, item in grouped.items():
+        status_key = review_widget_key("review_status", sentence_key)
+        modified_key = review_widget_key("modified_form", sentence_key)
+        if status_key not in st.session_state:
+            st.session_state[status_key] = item.get("review_status") or "미완료"
+        value_key = review_value_key(sentence_key)
+        if value_key not in st.session_state:
+            st.session_state[value_key] = item.get("modified_form") or item.get("original_form") or ""
+        st.session_state[modified_key] = st.session_state[value_key]
+
     st.html(f"""
         <style>
         .st-key-{filter_prefix}_next_article {{
