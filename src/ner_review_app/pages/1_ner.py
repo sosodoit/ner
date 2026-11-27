@@ -750,6 +750,7 @@ def review_list_ctes(
     response_review_needed="전체",
     response_review_status="전체",
     completion_status="전체",
+    retained_doc_id=None,
 ):
     """기사 목록과 개체 선택 목록에 동일한 배정·검수 조건을 적용한다."""
     result_filter = response_review_status if response_review_status in ("error", "normal") else "전체"
@@ -773,8 +774,8 @@ def review_list_ctes(
     filters = ["s.assignee = %s"]
     params.append(assignee)
     if completion_status != "전체":
-        filters.append("a.article_completed = %s")
-        params.append(completion_status == "완료")
+        filters.append("(a.article_completed = %s OR s.doc_id = %s)")
+        params.extend([completion_status == "완료", retained_doc_id])
     if search_text.strip():
         filters.append("(s.doc_id ILIKE %s OR s.sentence_id ILIKE %s)")
         params.extend([f"%{search_text.strip()}%"] * 2)
@@ -873,14 +874,14 @@ def fetch_rule_results(
     selected_press, data_versions, selected_types, limit, offset,
     review_method=None, assignee=None, search_text="",
     response_review_needed="전체", response_review_status="전체", selected_entity=None,
-    completion_status="전체",
+    completion_status="전체", retained_doc_id=None,
 ):
     """개체 선택은 기사에만 적용하고 해당 기사의 다른 검수대상 문장도 유지한다."""
     selected_rules = rules_for_error_types(selected_types)
     scope_ctes, params = review_list_ctes(
         selected_press, data_versions, selected_types, review_method, assignee,
         search_text, response_review_needed, response_review_status,
-        completion_status,
+        completion_status, retained_doc_id,
     )
     entity_condition = "TRUE"
     if selected_entity is not None:
@@ -890,7 +891,7 @@ def fetch_rule_results(
               AND l.entity_name = %s AND l.entity_type = %s
         )"""
         params.extend(selected_entity)
-    params.extend([limit, offset])
+    params.extend([limit, offset, retained_doc_id])
     rule_source = "matched_rules" if review_method == HUMAN_REVIEW_METHOD else "candidate_rules"
     rule_types = "r.response_error_types" if rule_source == "matched_rules" else "NULL::text[]"
     rule_columns = [
@@ -907,9 +908,13 @@ def fetch_rule_results(
         WITH {scope_ctes}, filtered_docs AS (
             SELECT DISTINCT s.doc_id FROM filtered s WHERE {entity_condition}
         ), page_docs AS (
-            SELECT doc_id FROM filtered_docs
-            ORDER BY SUBSTRING(doc_id FROM '(?:^|[.])([0-9]+)$')::numeric NULLS LAST, doc_id
-            LIMIT %s OFFSET %s
+            SELECT doc_id FROM (
+                SELECT doc_id FROM filtered_docs
+                ORDER BY SUBSTRING(doc_id FROM '(?:^|[.])([0-9]+)$')::numeric NULLS LAST, doc_id
+                LIMIT %s OFFSET %s
+            ) current_page
+            UNION
+            SELECT doc_id FROM filtered_docs WHERE doc_id = %s
         ), counts AS (
             {press_counts}
         ), page_rows AS (
@@ -931,6 +936,51 @@ def fetch_rule_results(
     rows = load_review_rows(query, params)
     return ([row for row in rows if row["doc_id"] is not None],
             rows[0]["filtered_article_count"], rows[0]["press_article_count"], rows[0]["final_errors"])
+
+
+#---------------------------------------------------------------------------------------------------------
+# 기능 - 현재 조회 조건에서 다음 기사 선택
+#---------------------------------------------------------------------------------------------------------
+def select_next_review_article(scope_args, selected_entity, current_doc_id, position, filter_prefix, filter_key):
+    scope_ctes, params = review_list_ctes(*scope_args)
+    entity_condition = "TRUE"
+    if selected_entity is not None:
+        entity_condition = """EXISTS (
+            SELECT 1 FROM public.ner_entity_location l
+            WHERE l.doc_id = s.doc_id AND l.sentence_id = s.sentence_id
+              AND l.entity_name = %s AND l.entity_type = %s
+        )"""
+        params.extend(selected_entity)
+    params.extend([current_doc_id, current_doc_id])
+    query = f"""
+        WITH {scope_ctes}, matching_docs AS (
+            SELECT DISTINCT s.doc_id FROM filtered s WHERE {entity_condition}
+        ), ordered_docs AS (
+            SELECT doc_id,
+                   COALESCE(SUBSTRING(doc_id FROM '(?:^|[.])([0-9]+)$')::numeric,
+                            'Infinity'::numeric) AS sort_number,
+                   ROW_NUMBER() OVER (
+                       ORDER BY SUBSTRING(doc_id FROM '(?:^|[.])([0-9]+)$')::numeric NULLS LAST, doc_id
+                   ) - 1 AS article_offset
+            FROM matching_docs
+        )
+        SELECT doc_id, article_offset FROM ordered_docs
+        WHERE (sort_number, doc_id) > (
+            COALESCE(SUBSTRING(%s::text FROM '(?:^|[.])([0-9]+)$')::numeric, 'Infinity'::numeric), %s
+        )
+        ORDER BY sort_number, doc_id LIMIT 1
+    """
+    with get_postgre_connect() as conn:
+        next_article = conn.execute(query, params).fetchone()
+    if next_article is None:
+        st.toast("현재 조회 조건에서 다음 기사가 없습니다.")
+        return
+    next_offset = int(next_article["article_offset"]) // PAGE_SIZE * PAGE_SIZE
+    next_id = next_article["doc_id"]
+    position.update(offset=next_offset, active_doc_id=next_id, active_page=next_offset)
+    position.setdefault("selections", {})[next_offset] = {"doc_id": next_id, "index": 0}
+    next_key = filter_prefix + "_doc_" + hashlib.md5(f"{filter_key}|{next_offset}".encode("utf-8")).hexdigest()
+    st.session_state[next_key] = next_id
 
 
 #---------------------------------------------------------------------------------------------------------
@@ -1484,11 +1534,8 @@ if selected_review_method == HUMAN_REVIEW_METHOD:
 completion_options = ["전체", "미완료", "완료"]
 if st.session_state.get(completion_widget_key) not in completion_options:
     st.session_state[completion_widget_key] = "전체"
-with st.sidebar.popover(f"검수 상태 ({st.session_state[completion_widget_key]})", width="stretch"):
-    completion_status = st.radio(
-        "검수 상태 선택", completion_options, key=completion_widget_key,
-        label_visibility="collapsed",
-    )
+with st.sidebar.popover(f"검수상태 ({st.session_state[completion_widget_key]})", width="stretch"):
+    completion_status = st.radio("검수 상태 선택", completion_options, key=completion_widget_key, label_visibility="collapsed")
 
 filter_by_type = selected_review_method in (HUMAN_REVIEW_METHOD, BATCH_REVIEW_METHOD)
 selected_types = ERROR_TYPES
@@ -1560,11 +1607,6 @@ with ner_header_placeholder.container(border=False):
         """,
         unsafe_allow_html=True,
     )
-    if priority_entity:
-        st.caption(
-            f"우선 검수: {selected_entity[0]} · {selected_entity[1]} · 전체 출현 {priority_entity['mention_count']:,}회. "
-            "이 개체가 있는 검수대상 문장을 포함한 기사를 표시하며, 기사의 다른 검수대상 문장도 함께 표시합니다."
-        )
 
 filter_key = (
     authenticated_assignee,
@@ -1670,6 +1712,7 @@ try:
         response_review_status,
         selected_entity,
         completion_status,
+        position.get("active_doc_id") if position.get("active_page") == offset else None,
     )
 except Exception as exc:
     st.error(f"검수 기사 조회 실패: {exc}")
@@ -1725,35 +1768,10 @@ all_page_completed = bool(page_sentence_keys) and all(
     for sentence_key in page_sentence_keys
 )
 
-# if selected_review_method == HUMAN_REVIEW_METHOD:
-#     st.sidebar.markdown(f"**{selected_press} · 휴먼검수 판정 전체 {press_article_count:,}기사**")
-#     st.sidebar.caption(f"룰 검출 기사 중 최종 오류 {final_errors:,}기사 · "
-#                        f"최종 정상 {press_article_count - final_errors:,}기사 (개체 판정 없음 포함)")
-# else:
-#     st.sidebar.caption(f"{selected_press} · {scope_label} {press_article_count:,}기사")
-st.sidebar.markdown(f"**내 검수 기사 목록 · {filtered_article_count:,}기사**")
-st.sidebar.caption("내 배정 기사에 선택한 조건과 검색어를 적용한 건수입니다.")
-st.sidebar.caption("기사의 검수 대상 문장을 모두 저장 완료하면 완료로 분류합니다.")
+st.sidebar.markdown(f'**내 검수 기사 목록 <code style="color:#475569;">{filtered_article_count:,}</code>**', unsafe_allow_html=True)
 
 if page_doc_ids:
     selection_key = filter_prefix + "_doc_" + hashlib.md5(f"{filter_key}|{offset}".encode("utf-8")).hexdigest()
-
-    # doc_captions = []
-    # for doc_id in page_doc_ids:
-    #     labels = set()
-    #     for version in versions_by_doc[doc_id]:
-    #         for sentence_key in docs[(version, doc_id)]:
-    #             entry = grouped[sentence_key]
-    #             method = METHOD_DISPLAY_NAMES[entry["review_method"]]
-    #             if entry["final_result"]:
-    #                 labels.add("최종 오류" if entry["final_result"] == "error" else "최종 정상")
-    #             elif entry["review_method"] == HUMAN_REVIEW_METHOD:
-    #                 method += " · " + (RESPONSE_STATUS_NAMES.get(entry["article_result"]) if entry["article_result"] else "개체 판정 없음")
-    #             labels.add(method)
-    #             if entry["rule_detected"]:
-    #                 labels.add("룰 검출")
-    #     doc_captions.append(" / ".join(sorted(labels)))
-
     with st.sidebar:
         selected_id = render_article_selector(page_doc_ids, position, offset, selection_key)
     versions = versions_by_doc[selected_id]
@@ -1770,8 +1788,23 @@ if page_doc_ids:
     selected_doc_key = (selected_version, selected_id)
 else:
     selected_doc_key = None
-    # st.sidebar.info("조건에 해당하는 기사가 없습니다.")
-    st.info("현재 조회 조건에 맞는 배정 기사가 없습니다.")
+    st.info("현재 조회 조건에 맞는 기사가 없습니다.")
+
+if selected_doc_key is not None:
+    st.sidebar.button(
+        "다음 기사", key=f"{filter_prefix}_next_article", type="tertiary",
+        width="stretch", shortcut="Ctrl+Enter",
+        help="현재 조회 조건의 다음 기사로 이동합니다. 수정 내용은 완료 버튼으로 저장한 뒤 이동하세요.",
+        on_click=select_next_review_article,
+        args=(
+            (
+                selected_press, press_versions[selected_press], selected_types, selected_review_method,
+                authenticated_assignee, search_text, response_review_needed, response_review_status,
+                completion_status,
+            ),
+            selected_entity, selected_id, position, filter_prefix, filter_key,
+        ),
+    )
 
 #---------------------------------------------------------------------------------------------------------
 # 사이드바 - 기사 목록 서식 및 페이지 이동
@@ -2108,13 +2141,13 @@ def render_sentence_layout(idx, sentence_key, item, sentence_id, matches, decisi
             else:
                 st.markdown(
                     f"`문장 {idx:02d}: {sentence_id}` "
-                    f"`검수 상태: {status}`"
+                    f"`검수상태: {status}`"
                 )
-            if selected_entity and any(
-                (tag[1].strip(), tag[2].strip()) == selected_entity
-                for tag in TAGGED_ENTITY_PATTERN.finditer(item["original_form"])
-            ):
-                st.caption(f"우선 검수 개체 출현: {selected_entity[0]} · {selected_entity[1]}")
+            # if selected_entity and any(
+            #     (tag[1].strip(), tag[2].strip()) == selected_entity
+            #     for tag in TAGGED_ENTITY_PATTERN.finditer(item["original_form"])
+            # ):
+            #     st.caption(f"우선 검수 개체 출현: {selected_entity[0]} · {selected_entity[1]}")
             st.markdown('<div style="margin-bottom:0.35rem; font-weight:600;">원문</div>', unsafe_allow_html=True)
             st.markdown(
                 f"""<div style="min-height:100px; padding:0.75rem; border-radius:0.5rem; background-color:rgb(240, 242, 246); white-space:pre-wrap; word-break:break-word;">{highlighted_form_with_decision(item["original_form"], matches, decision_highlights, references, show_rule_patterns)}</div>""",
@@ -2328,10 +2361,11 @@ else:
         batch_processing_message = st.session_state.pop("batch_processing_message", None)
         if batch_processing_message:
             st.success(batch_processing_message)
+        
         st.caption(
             f"일괄처리 범위: 현재 페이지 {len(page_doc_ids):,}기사. "
             + (f"선택한 {selected_entity[0]} · {selected_entity[1]} 중 하이라이트된 태그만 변환합니다. " if selected_entity
-               else "하이라이트된 태그만 변환합니다. ")
+            else "하이라이트된 태그만 변환합니다. ")
             + f"현재 조건에서 일괄처리하거나 완료로 표시한 {len(pending_sentence_keys):,}문장만 일괄저장합니다."
         )
         action_layout_col, _ = st.columns([3, 1])
@@ -2340,7 +2374,7 @@ else:
                 batch_col, save_col = st.columns(2, gap="small")
                 with batch_col:
                     st.button(
-                        "현재 페이지 일괄처리",
+                        "일괄처리",
                         key="batch_processing_button",
                         width="stretch",
                         help="현재 페이지에서 선택한 개체 조건에 맞고 하이라이트된 <X: Y>를 X 형태로 변환합니다.",
@@ -2349,7 +2383,7 @@ else:
                     )
                 with save_col:
                     if st.button(
-                        "현재 페이지 일괄저장",
+                        "일괄저장",
                         key="batch_save_review_button",
                         disabled=not pending_sentence_keys,
                         width="stretch",
@@ -2386,7 +2420,7 @@ else:
                         for sentence_key in pending_sentence_keys:
                             st.session_state.pop(review_widget_key("batch_pending", sentence_key), None)
                         st.session_state["batch_processing_message"] = (
-                            "일괄처리 결과를 DB에 저장했습니다."
+                            "일괄처리 결과를 저장했습니다."
                         )
                         st.rerun()
 

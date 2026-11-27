@@ -53,7 +53,7 @@ def render_entity_filter(scope, load_page, key_prefix, inline_results=False):
         }}
         </style>
     """)
-    with st.sidebar.container(key=root_key):
+    with st.sidebar.container(key=root_key, border=True):
         #---------------------------------------------------------------------------------------------------------
         # 개체 필터 - 개체명 목록 준비 상태 확인
         #---------------------------------------------------------------------------------------------------------
@@ -63,20 +63,14 @@ def render_entity_filter(scope, load_page, key_prefix, inline_results=False):
             st.warning("개체명 목록 상태를 확인하지 못했습니다. 잠시 후 다시 조회해 주세요.")
             return st.session_state[f"{key_prefix}_selected"]
         if not ready:
-            st.info("개체명목록 화면에서 초기 준비를 완료한 뒤 사용할 수 있습니다.")
+            st.info("개체명 목록 화면에서 초기 준비를 완료한 뒤 사용할 수 있습니다.")
             return None
         #---------------------------------------------------------------------------------------------------------
         # 개체 필터 - 검색어 및 출현빈도 정렬 조건 입력
         #---------------------------------------------------------------------------------------------------------
-        with st.form(f"{key_prefix}_search", border=not inline_results):
-            term = st.text_input(
-                "개체명·분류 검색", placeholder="개체명 또는 분류의 일부 입력",
-                key=f"{key_prefix}_name",
-            ).strip()
-            order = st.radio(
-                "출현빈도정렬", ["많은 순", "적은 순"], horizontal=True,
-                key=f"{key_prefix}_order",
-            )
+        with st.form(f"{key_prefix}_search", border=False):
+            term = st.text_input("개체명·분류 검색", placeholder="개체명 또는 분류의 일부 입력", key=f"{key_prefix}_name", label_visibility="collapsed").strip()
+            order = st.radio("출현 빈도 정렬", ["많은 순", "적은 순"], horizontal=True, key=f"{key_prefix}_order")
             if st.form_submit_button("개체 목록 조회", width="stretch"):
                 st.session_state[f"{key_prefix}_query"] = (term, order)
                 st.session_state[f"{key_prefix}_starts"] = [None]
@@ -87,9 +81,7 @@ def render_entity_filter(scope, load_page, key_prefix, inline_results=False):
         query = st.session_state[f"{key_prefix}_query"]
         if query is not None:
             starts = st.session_state[f"{key_prefix}_starts"]
-            with st.container(border=not inline_results):
-                if not inline_results:
-                    st.markdown("**조회 결과에서 개체 선택**")
+            with st.container(border=False):
                 try:
                     rows = load_page(query[0], query[1] == "많은 순", starts[-1])
                     visible = rows[:ENTITY_PAGE_SIZE]
@@ -101,7 +93,7 @@ def render_entity_filter(scope, load_page, key_prefix, inline_results=False):
                         choice = st.selectbox(
                             "검수할 개체명·분류", list(entities), key=choice_key,
                             format_func=lambda pair: f"{pair[0]} · {pair[1]} · 전체 {entities[pair]['mention_count']:,}회",
-                            label_visibility="collapsed" if inline_results else "visible",
+                            label_visibility="collapsed"
                         )
                         if st.button("선택 개체로 조회", key=f"{key_prefix}_apply", width="stretch"):
                             st.session_state[f"{key_prefix}_selected"] = entities[choice]
@@ -126,7 +118,7 @@ def render_entity_filter(scope, load_page, key_prefix, inline_results=False):
         #---------------------------------------------------------------------------------------------------------
         selected = st.session_state[f"{key_prefix}_selected"]
         if selected:
-            st.caption(f"적용 중: {selected['entity_name']} · {selected['entity_type']} · 전체 {selected['mention_count']:,}회")
+            # st.caption(f"적용 중: {selected['entity_name']} · {selected['entity_type']} · 전체 {selected['mention_count']:,}회")
             if st.button("개체 선택 해제", key=f"{key_prefix}_clear", width="stretch"):
                 st.session_state[f"{key_prefix}_selected"] = None
                 st.rerun()

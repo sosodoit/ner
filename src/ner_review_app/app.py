@@ -106,6 +106,33 @@ pages = [
     )
 ]
 
+#---------------------------------------------------------------------------------------------------------
+# 기능 - 담당자 로그아웃 및 인증 정보 해제
+#---------------------------------------------------------------------------------------------------------
+def logout_reviewer():
+    st.session_state.clear()
+    for key in ("reviewer", "reviewer_token"):
+        if key in st.query_params:
+            del st.query_params[key]
+    st.session_state["logout_requested"] = True
+
+
 # 왼쪽 사이드바 메뉴 구성
 navigation = st.navigation(pages, position="sidebar")
+if st.session_state.pop("logout_requested", False):
+    st.switch_page(pages[0])
+
+#---------------------------------------------------------------------------------------------------------
+# 사이드바 - 모든 화면의 공통 담당자 표시 및 로그아웃
+#---------------------------------------------------------------------------------------------------------
+account_area = st.sidebar.empty()
 navigation.run()
+assignee = st.session_state.get("authenticated_assignee")
+if assignee:
+    with account_area.container():
+        name_col, logout_col = st.columns([3, 1], vertical_alignment="center")
+        name_col.caption(f"담당자: {assignee}")
+        logout_col.button(
+            "로그아웃", key="reviewer_logout", type="tertiary",
+            help="로그인 정보를 해제하고 홈으로 이동합니다.", on_click=logout_reviewer,
+        )

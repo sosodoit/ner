@@ -45,6 +45,8 @@ def render_article_selector(article_ids, position, page, key):
     selected_id = st.radio(
         "기사 선택", article_ids, key=key,
         label_visibility="collapsed",
+        on_change=lambda: position.update(active_doc_id=st.session_state[key], active_page=page),
     )
+    position.update(active_doc_id=selected_id, active_page=page)
     selections[page] = {"doc_id": selected_id, "index": article_ids.index(selected_id)}
     return selected_id
