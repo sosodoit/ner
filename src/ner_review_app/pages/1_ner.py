@@ -16,6 +16,7 @@ import streamlit as st
 from src.ner_review.response_input import ENTITY_PATTERN
 from src.ner_review_app.modules.postgredb import get_postgre_connect
 from src.ner_review_app.modules.review_rows import load_review_rows
+from src.ner_review_app.modules.entity_filter import ENTITY_PAGE_SIZE, render_entity_filter
 from src.ner_review_app.modules.entity_catalog import entity_search_pattern
 from src.ner_review_app.modules.review_targets import HUMAN_REVIEW_METHOD, METHOD_DISPLAY_NAMES, REVIEW_SCOPE_CTES
 from src.ner_review_app.modules.review_statistics import load_review_data
