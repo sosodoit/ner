@@ -941,7 +941,17 @@ def fetch_rule_results(
 #---------------------------------------------------------------------------------------------------------
 # 기능 - 현재 조회 조건에서 다음 기사 선택
 #---------------------------------------------------------------------------------------------------------
-def select_next_review_article(scope_args, selected_entity, current_doc_id, position, filter_prefix, filter_key):
+def select_next_review_article(scope_args, selected_entity, current_doc_id, position, filter_prefix, filter_key, page_doc_ids):
+    current_index = page_doc_ids.index(current_doc_id)
+    if current_index + 1 < len(page_doc_ids):
+        next_id = page_doc_ids[current_index + 1]
+        next_offset = position["offset"]
+        position.update(active_doc_id=next_id, active_page=next_offset)
+        position.setdefault("selections", {})[next_offset] = {"doc_id": next_id, "index": current_index + 1}
+        next_key = filter_prefix + "_doc_" + hashlib.md5(f"{filter_key}|{next_offset}".encode("utf-8")).hexdigest()
+        st.session_state[next_key] = next_id
+        return
+
     scope_ctes, params = review_list_ctes(*scope_args)
     entity_condition = "TRUE"
     if selected_entity is not None:
@@ -1389,7 +1399,7 @@ def sentence_sort_key(sentence_key):
 # 데이터 조회
 #---------------------------------------------------------------------------------------------------------
 authenticated_assignee = authenticate_reviewer()
-show_detailed_review = authenticated_assignee == "김소희"
+show_detailed_review = False
 ner_header_placeholder = st.empty()
 page_review_method = globals().get("REVIEW_PAGE_METHOD", HUMAN_REVIEW_METHOD)
 article_state = get_article_list_state(("review", page_review_method, authenticated_assignee))
@@ -1791,6 +1801,19 @@ else:
     st.info("현재 조회 조건에 맞는 기사가 없습니다.")
 
 if selected_doc_key is not None:
+    st.html(f"""
+        <style>
+        .st-key-{filter_prefix}_next_article {{
+            position: fixed;
+            width: 1px;
+            height: 1px;
+            overflow: hidden;
+            clip-path: inset(50%);
+            opacity: 0;
+            pointer-events: none;
+        }}
+        </style>
+    """)
     st.sidebar.button(
         "다음 기사", key=f"{filter_prefix}_next_article", type="tertiary",
         width="stretch", shortcut="Ctrl+Enter",
@@ -1802,7 +1825,7 @@ if selected_doc_key is not None:
                 authenticated_assignee, search_text, response_review_needed, response_review_status,
                 completion_status,
             ),
-            selected_entity, selected_id, position, filter_prefix, filter_key,
+            selected_entity, selected_id, position, filter_prefix, filter_key, page_doc_ids,
         ),
     )
 
@@ -2012,7 +2035,12 @@ def render_response_results(references, reference_key):
         target = reference["target_span"] or "대상 표현 없음"
         corrected = reference["corrected_span"]
         suggestion = corrected or "삭제" if corrected is not None else "수정 제안 없음"
-        summary = html.escape(f"{number}. {target} → {suggestion}")
+        summary = (
+            f'<span class="review-reference-label">{number}. 검수대상</span>'
+            f'<span class="review-reference-value">{html.escape(target)}</span>'
+            '<span class="review-reference-label">수정제안</span>'
+            f'<span class="review-reference-value">{html.escape(suggestion)}</span>'
+        )
         if reference["validation_failed"]:
             details_html = rule_result_html(reference["rules"]) or "룰 검출 결과 없음"
         else:
@@ -2022,7 +2050,7 @@ def render_response_results(references, reference_key):
         entries.append(
             f'<details class="review-reference-entry" name="{reference_key}" '
             f'id="{reference_key}_{number}"{open_attribute}>'
-            f'<summary title="{summary}">{summary}</summary>'
+            f'<summary>{summary}</summary>'
             f'<div class="review-reference-reason">{details_html}</div></details>'
         )
     if entries:
@@ -2081,10 +2109,22 @@ def render_sentence_layout(idx, sentence_key, item, sentence_id, matches, decisi
             display: block;
             padding: 8px 2px;
             cursor: pointer;
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
+            white-space: normal;
+            overflow-wrap: anywhere;
             list-style: none;
+        }}
+        .st-key-{reference_key} .review-reference-label {{
+            display: block;
+            margin-top: 4px;
+            color: #64748B;
+            font-size: 12px;
+            font-weight: 500;
+        }}
+        .st-key-{reference_key} .review-reference-value {{
+            display: block;
+            white-space: pre-wrap;
+            overflow-wrap: anywhere;
+            word-break: break-word;
         }}
         .st-key-{reference_key} summary::before {{content: "▸ ";}}
         .st-key-{reference_key} details[open] > summary::before {{content: "▾ ";}}
