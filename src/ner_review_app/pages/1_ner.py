@@ -520,6 +520,7 @@ def save_review_add_item(item, assignee, modified_form, review_status):
             ),
         )
     invalidate_review_rows(item["press"], assignee, [item["doc_id"]], status_changed=False)
+    load_review_data.clear()
 
 
 #---------------------------------------------------------------------------------------------------------

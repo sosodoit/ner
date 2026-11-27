@@ -108,6 +108,39 @@ def load_review_data():
     """
 
     #---------------------------------------------------------------------------------------------------------
+    # 집계 쿼리 - 전체검수대상 밖 원본 기사의 후처리 현황
+    #---------------------------------------------------------------------------------------------------------
+    sample_query = f"""
+        WITH {REVIEW_SCOPE_CTES}, original_articles AS (
+            SELECT DISTINCT publisher AS press, doc_id FROM public.ner_documents
+        ), target_articles AS (
+            SELECT DISTINCT s.press, s.doc_id
+            FROM review_sentences s
+            LEFT JOIN rule_articles r USING (press, doc_id)
+            WHERE s.review_method <> 'LLM검수'
+               OR (r.final_result = 'error' AND s.human_error)
+        ), postprocessed_articles AS (
+            SELECT press, doc_id,
+                   BOOL_AND(review_status IS NOT DISTINCT FROM '완료') AS completed
+            FROM public.ner_human_review_add
+            GROUP BY press, doc_id
+        )
+        SELECT o.press, COUNT(*) AS original_count,
+               COUNT(t.doc_id) AS target_count,
+               COUNT(*) FILTER (WHERE t.doc_id IS NULL) AS normal_count,
+               COUNT(*) FILTER (
+                   WHERE t.doc_id IS NULL AND a.completed
+               ) AS postprocessed_count,
+               COUNT(*) FILTER (
+                   WHERE t.doc_id IS NULL AND NOT COALESCE(a.completed, FALSE)
+               ) AS true_normal_count
+        FROM original_articles o
+        LEFT JOIN target_articles t USING (press, doc_id)
+        LEFT JOIN postprocessed_articles a USING (press, doc_id)
+        GROUP BY o.press ORDER BY o.press
+    """
+
+    #---------------------------------------------------------------------------------------------------------
     # 데이터 조회 - 동일 시점의 검수 현황 및 배정 결과
     #---------------------------------------------------------------------------------------------------------
     with get_postgre_connect() as connection:
@@ -116,6 +149,7 @@ def load_review_data():
             methods = _fetch_dataframe(cursor, method_query, (None, None, None))
             expected = _fetch_dataframe(cursor, check_query, (HUMAN_REVIEW_METHOD,))
             assignments = _fetch_dataframe(cursor, assignment_query)
+            sample_summary = _fetch_dataframe(cursor, sample_query, (None, None, None))
 
     #---------------------------------------------------------------------------------------------------------
     # 집계 확인 - 원천 판정과 현황 집계의 일치 여부
@@ -141,7 +175,10 @@ def load_review_data():
     summary = summary.join(progress)
     summary = summary.fillna(0).astype("int64")
     summary["incomplete_count"] = summary["target_count"] - summary["completed_count"]
-    return {"summary": summary.sort_index().reset_index(), "methods": methods, "assignments": assignments}
+    return {
+        "summary": summary.sort_index().reset_index(), "methods": methods,
+        "assignments": assignments, "sample_summary": sample_summary,
+    }
 
 
 #---------------------------------------------------------------------------------------------------------

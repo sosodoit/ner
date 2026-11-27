@@ -140,7 +140,9 @@ def render_review_statistics(data):
     #---------------------------------------------------------------------------------------------------------
     # 본문 - 탭 구성
     #---------------------------------------------------------------------------------------------------------
-    tab1, tab2, tab3 = st.tabs(["언론사별 검수 현황", "언론사별 검수 방식", "담당자 배정"])
+    tab1, tab2, sample_tab, tab3 = st.tabs([
+        "언론사별 검수 현황", "언론사별 검수 방식", "샘플 검수 현황", "담당자 배정",
+    ])
     with tab1:
         #---------------------------------------------------------------------------------------------------------
         # 본문 - 언론사별 검수 현황
@@ -204,6 +206,37 @@ def render_review_statistics(data):
                 st.dataframe(styled_methods, width="stretch", hide_index=True, column_config={
                     "완료율": st.column_config.ProgressColumn(min_value=0, max_value=100, format="%.1f%%")
                 })
+
+    with sample_tab:
+        #---------------------------------------------------------------------------------------------------------
+        # 본문 - 언론사별 샘플 검수 및 후처리 현황
+        #---------------------------------------------------------------------------------------------------------
+        st.caption("**정상건**은 원본기사 중 전체검수대상이 아닌 기사입니다. 검수방식이 겹쳐도 기사는 한 번만 집계합니다.")
+        st.caption("**후처리완료건**은 정상건 중 추가 검수에 등록된 문장이 모두 ‘완료’인 기사입니다.")
+        st.caption("**찐정상건**은 정상건에서 후처리완료건을 뺀 나머지입니다.")
+        sample_labels = {
+            "original_count": "원본기사", "normal_count": "정상건",
+            "postprocessed_count": "후처리완료건", "true_normal_count": "찐정상건",
+        }
+        sample_summary = data["sample_summary"]
+        sample_totals = sample_summary[list(sample_labels)].sum().to_dict()
+        sample_display = pd.concat([
+            pd.DataFrame([{"press": "전체합계", **sample_totals}]), sample_summary,
+        ], ignore_index=True)
+        sample_display = sample_display[["press", *sample_labels]].rename(
+            columns={"press": "언론사", **sample_labels},
+        )
+        styled_sample = sample_display.style.set_properties(
+            subset=(sample_display.index[sample_display["언론사"] == "전체합계"], slice(None)),
+            **{"background-color": header_background, "font-weight": "bold"},
+        ).set_properties(
+            subset=["후처리완료건"], **{"color": "#15803d"},
+        ).set_properties(
+            subset=["찐정상건"], **{"color": "#2563eb"},
+        )
+        st.dataframe(
+            styled_sample, width="stretch", hide_index=True, height=(len(sample_display) + 1) * 35 + 3,
+        )
 
     with tab3:
         st.session_state.pop("assignment_count_filter", None)
