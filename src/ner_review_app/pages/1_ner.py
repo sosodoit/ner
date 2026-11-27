@@ -1,21 +1,30 @@
 # -*- coding: utf-8 -*-
+"""휴먼 검수 화면"""
+#---------------------------------------------------------------------------------------------------------
+# 기본 설정 - 라이브러리 불러오기
+#---------------------------------------------------------------------------------------------------------
 import os
 import re
 import html
-import hashlib
 import hmac
+import hashlib
 import streamlit as st
+
+#---------------------------------------------------------------------------------------------------------
+# 기본 설정 - 검수 공통 모듈 불러오기
+#---------------------------------------------------------------------------------------------------------
 from src.ner_review.response_input import ENTITY_PATTERN
 from src.ner_review_app.modules.postgredb import get_postgre_connect
-from src.ner_review_app.modules.review_targets import HUMAN_REVIEW_METHOD, METHOD_DISPLAY_NAMES, REVIEW_SCOPE_CTES
-from src.ner_review_app.modules.review_statistics import load_review_data
 from src.ner_review_app.modules.review_rows import load_review_rows
 from src.ner_review_app.modules.entity_catalog import entity_search_pattern
-from src.ner_review_app.modules.entity_filter import ENTITY_PAGE_SIZE, render_entity_filter
-from src.ner_review_app.pages._article_list_state import (
-    get_article_list_state, remember_article_filters, render_article_selector,
-)
+from src.ner_review_app.modules.review_targets import HUMAN_REVIEW_METHOD, METHOD_DISPLAY_NAMES, REVIEW_SCOPE_CTES
+from src.ner_review_app.modules.review_statistics import load_review_data
+from src.ner_review_app.modules._article_list_state import get_article_list_state, remember_article_filters, render_article_selector
 
+
+#---------------------------------------------------------------------------------------------------------
+# 기본 설정 - 오류 유형별 검출 룰
+#---------------------------------------------------------------------------------------------------------
 RULES_BY_TYPE = {
     "EXT_S003": ["EXT_S003"],
     "EXT_E003": [
@@ -70,6 +79,9 @@ RULES_BY_TYPE = {
     ],
 }
 
+#---------------------------------------------------------------------------------------------------------
+# 기본 설정 - 오류 유형 명칭 및 룰 매핑
+#---------------------------------------------------------------------------------------------------------
 # 검수결과의 lv1을 공통 오류유형으로 사용한다.
 ERROR_TYPE_NAMES = {
     "tagging_error": "태그 오류",
@@ -91,6 +103,9 @@ RULE_ERROR_TYPES = {
     for rule in rules
 }
 
+#---------------------------------------------------------------------------------------------------------
+# 기본 설정 - 세부 검출 룰 표시 명칭
+#---------------------------------------------------------------------------------------------------------
 # 세부유형 화면 표시 명칭
 # 추후 하위 태그 내용 합쳐서 상위 태그 내용으로만 보이도록
 RULE_NAMES = {
@@ -147,6 +162,9 @@ RULE_NAMES = {
     "EXT_E006_EV_002": "[EV] 라운드·회차·경기",
 }
 
+#---------------------------------------------------------------------------------------------------------
+# 기본 설정 - 페이지 크기 및 담당자 인증 설정
+#---------------------------------------------------------------------------------------------------------
 ERROR_TYPES = tuple(ERROR_TYPE_NAMES)
 PAGE_SIZE = 10
 TAGGED_ENTITY_PATTERN = re.compile(r"<\s*([^<>:]+?)\s*:\s*([^<>]+?)\s*>")
@@ -154,6 +172,9 @@ REVIEWER_CREDENTIAL_ENV_PREFIX = "NER_REVIEWER_"
 REVIEWER_QUERY_PARAM = "reviewer"
 REVIEWER_TOKEN_QUERY_PARAM = "reviewer_token"
 BATCH_REVIEW_METHOD = "일괄처리"
+#---------------------------------------------------------------------------------------------------------
+# 기본 설정 - 검수 판정 및 오류 안내 문구
+#---------------------------------------------------------------------------------------------------------
 RESPONSE_STATUS_NAMES = {
     "error": "오류",
     "normal": "정상",
@@ -175,6 +196,9 @@ RESPONSE_ERROR_MESSAGES = {
 }
 
 
+#---------------------------------------------------------------------------------------------------------
+# 기능 - 담당자 계정 조회 및 로그인 인증
+#---------------------------------------------------------------------------------------------------------
 def get_reviewer_credentials():
     credentials = {}
     for index in range(1, 5):
@@ -228,6 +252,9 @@ def authenticate_reviewer():
     st.stop()
 
 
+#---------------------------------------------------------------------------------------------------------
+# 기능 - 문장별 위젯 키 및 수정 상태 관리
+#---------------------------------------------------------------------------------------------------------
 def review_widget_key(prefix, sentence_key):
     key = hashlib.md5(repr(sentence_key).encode("utf-8")).hexdigest()
     return f"{prefix}_{key}"
@@ -260,6 +287,9 @@ def is_modified_form(current_form, original_form):
     return (current_form or "") != (original_form or "")
 
 
+#---------------------------------------------------------------------------------------------------------
+# 기능 - 강조 대상 추출 및 태그 일괄처리
+#---------------------------------------------------------------------------------------------------------
 def highlighted_tag_spans(form, matches):
     """Return tagged-entity spans which overlap the currently highlighted matches."""
     form = form or ""
@@ -326,6 +356,9 @@ def apply_batch_processing(sentence_keys, grouped, selected_entity=None):
     )
 
 
+#---------------------------------------------------------------------------------------------------------
+# 기능 - 수정완료 및 이상없음 처리
+#---------------------------------------------------------------------------------------------------------
 def mark_review_complete_if_modified(
     status_key,
     modified_key,
@@ -392,6 +425,9 @@ def mark_no_issue_if_unmodified(
     st.toast("이상없음으로 저장되었습니다.")
 
 
+#---------------------------------------------------------------------------------------------------------
+# 기능 - 배정 문장 검수 결과 저장
+#---------------------------------------------------------------------------------------------------------
 def save_review_page(review_updates, assignee, status_changed=True):
     """현재 페이지의 검수 결과를 ner_human_review에 저장한다."""
     query = """
@@ -442,6 +478,9 @@ def save_review_item(item, assignee, modified_form, review_status):
     )
 
 
+#---------------------------------------------------------------------------------------------------------
+# 기능 - 추가 검수 문장 저장
+#---------------------------------------------------------------------------------------------------------
 def save_review_add_item(item, assignee, modified_form, review_status):
     query = """
         INSERT INTO public.ner_human_review_add (
@@ -479,6 +518,9 @@ def save_review_add_item(item, assignee, modified_form, review_status):
     load_review_rows.clear()
 
 
+#---------------------------------------------------------------------------------------------------------
+# 기능 - 수정문 임시 상태 및 초안 저장
+#---------------------------------------------------------------------------------------------------------
 def save_review_draft(item, assignee, review_method=None):
     sentence_key = (item["data_version"], item["doc_id"], item["sentence_id"])
     modified_key = review_widget_key("modified_form", sentence_key)
@@ -497,6 +539,9 @@ def save_review_draft(item, assignee, review_method=None):
         st.session_state[status_key] = review_status
     save_review_item(item, assignee, modified_form, review_status)
 
+#---------------------------------------------------------------------------------------------------------
+# 데이터 조회 - 언론사별 데이터 버전
+#---------------------------------------------------------------------------------------------------------
 @st.cache_data(ttl=3600, show_spinner=False)
 def fetch_press_versions():
     with get_postgre_connect() as conn:
@@ -518,6 +563,9 @@ def fetch_press_versions():
     return press_versions
 
 
+#---------------------------------------------------------------------------------------------------------
+# 조회 조건 - 오류 유형 및 검수결과 필터
+#---------------------------------------------------------------------------------------------------------
 def rules_for_error_types(selected_types):
     return tuple(
         rule
@@ -557,6 +605,9 @@ def response_filter_condition(review_needed, review_status, selected_types):
     return " AND ".join(conditions), params
 
 
+#---------------------------------------------------------------------------------------------------------
+# 조회 조건 - 검수결과와 검출 룰 연결
+#---------------------------------------------------------------------------------------------------------
 def review_filter_ctes(press, data_versions, selected_types, review_needed, review_status, doc_id=None):
     """목록·본문·참고 정보에 같은 조건을 적용하고, 같은 개체의 검수결과를 우선한다."""
     selected_rules = rules_for_error_types(selected_types)
@@ -631,6 +682,9 @@ def review_filter_ctes(press, data_versions, selected_types, review_needed, revi
     return query, params
 
 
+#---------------------------------------------------------------------------------------------------------
+# 데이터 조회 - 검수 판정 및 문장별 참고 정보
+#---------------------------------------------------------------------------------------------------------
 @st.cache_data(ttl=3600, show_spinner=False)
 def fetch_response_statuses(press, data_versions):
     with get_postgre_connect() as conn:
@@ -682,6 +736,9 @@ def fetch_response_results(data_version, press, doc_id, review_needed, review_st
     return results
 
 
+#---------------------------------------------------------------------------------------------------------
+# 조회 조건 - 배정 기사 및 기사 완료 상태
+#---------------------------------------------------------------------------------------------------------
 def review_list_ctes(
     selected_press,
     data_versions,
@@ -749,6 +806,9 @@ def review_list_ctes(
     return query, params
 
 
+#---------------------------------------------------------------------------------------------------------
+# 데이터 조회 - 검수 대상 개체 목록 및 선택
+#---------------------------------------------------------------------------------------------------------
 @st.cache_data(ttl=900, max_entries=64, show_spinner=False)
 def fetch_review_entities(
     selected_press, data_versions, selected_types, review_method, assignee,
@@ -805,6 +865,9 @@ def select_review_entity(scope_args, key_prefix):
     )
 
 
+#---------------------------------------------------------------------------------------------------------
+# 데이터 조회 - 조건별 검수 기사 및 대상 문장
+#---------------------------------------------------------------------------------------------------------
 def fetch_rule_results(
     selected_press, data_versions, selected_types, limit, offset,
     review_method=None, assignee=None, search_text="",
@@ -869,6 +932,9 @@ def fetch_rule_results(
             rows[0]["filtered_article_count"], rows[0]["press_article_count"], rows[0]["final_errors"])
 
 
+#---------------------------------------------------------------------------------------------------------
+# 데이터 조회 - 선택 기사의 전체 문장
+#---------------------------------------------------------------------------------------------------------
 def fetch_article_sentences(
     data_version,
     doc_id,
@@ -989,6 +1055,9 @@ def fetch_article_sentences(
     )
 
 
+#---------------------------------------------------------------------------------------------------------
+# 데이터 가공 - 문장별 검출 룰 및 판정 묶음
+#---------------------------------------------------------------------------------------------------------
 def group_sentences(rows, selected_rules):
     grouped = {}
 
@@ -1056,6 +1125,9 @@ def group_sentences(rows, selected_rules):
     return grouped
 
 
+#---------------------------------------------------------------------------------------------------------
+# 기능 - 의심도 및 상세 판정 표시 기준
+#---------------------------------------------------------------------------------------------------------
 def has_decision_result(decision):
     return any(value not in (None, "", [], {}, ()) for value in decision.values())
 
@@ -1078,6 +1150,9 @@ def normalize_suspicion_level(value):
     return value if value in SUSPICION_COLORS else None
 
 
+#---------------------------------------------------------------------------------------------------------
+# 기능 - 오류 유형별 상세 판정 및 강조 구간
+#---------------------------------------------------------------------------------------------------------
 def filter_decision_types(decision, selected_types):
     filtered = {
         key: decision.get(key)
@@ -1112,6 +1187,9 @@ def get_decision_highlights(decision):
     return [(entity, level) for entity in entities if level]
 
 
+#---------------------------------------------------------------------------------------------------------
+# 화면 구성 - 검출 룰과 수정 제안의 원문 강조
+#---------------------------------------------------------------------------------------------------------
 def highlighted_form_with_decision(form, matches, decision_highlights, references=(), show_rule_patterns=False):
     """검수 대상 우선 강조에 기존 의심 밑줄과 수정 제안 테두리를 함께 표시한다."""
     form = form or ""
@@ -1189,6 +1267,9 @@ def highlighted_form_with_decision(form, matches, decision_highlights, reference
         f'font-size:16px">{"".join(rendered)}</div>'
     )
 
+#---------------------------------------------------------------------------------------------------------
+# 화면 구성 - 검출 패턴 강조
+#---------------------------------------------------------------------------------------------------------
 def highlighted_form(form, matches):
     patterns = {
         pattern_part.strip()
@@ -1222,6 +1303,9 @@ def highlighted_form(form, matches):
         f'font-size:16px">{"".join(highlighted)}</div>'
     )
 
+#---------------------------------------------------------------------------------------------------------
+# 기능 - 문장 표시 명칭 및 기사 정렬 기준
+#---------------------------------------------------------------------------------------------------------
 def sentence_label(sentence_key, grouped):
     item = grouped[sentence_key]
     sentence_id = item["sentence_id"]
@@ -1250,9 +1334,9 @@ def sentence_sort_key(sentence_key):
             parts.append((1, part))
     return data_version, doc_id, tuple(parts), sentence_id
 
-# -----------------------------------------------------------------------------
+#---------------------------------------------------------------------------------------------------------
 # 데이터 조회
-# -----------------------------------------------------------------------------
+#---------------------------------------------------------------------------------------------------------
 authenticated_assignee = authenticate_reviewer()
 show_detailed_review = authenticated_assignee == "김소희"
 ner_header_placeholder = st.empty()
@@ -1280,9 +1364,9 @@ if not press_versions:
     st.info("조회 가능한 데이터가 없습니다.")
     st.stop()
     
-# -----------------------------------------------------------------------------
+#---------------------------------------------------------------------------------------------------------
 # 다중 선택 드롭다운
-# -----------------------------------------------------------------------------
+#---------------------------------------------------------------------------------------------------------
 def set_all_checkboxes(options, key_prefix, checked):
     """전체 선택 및 해제"""
     for option in options:
@@ -1339,9 +1423,9 @@ def multi_select_filter(label, options, default, format_func, key):
         if st.session_state[f"{key}_{option}"]
     )
 
-# -----------------------------------------------------------------------------
+#---------------------------------------------------------------------------------------------------------
 # 좌측 사이드바 - 필터
-# -----------------------------------------------------------------------------
+#---------------------------------------------------------------------------------------------------------
 press_options = sorted(press_versions)
 if requested_press in press_options:
     st.session_state[press_widget_key] = requested_press
@@ -1369,6 +1453,9 @@ selected_review_method = page_review_method
 selected_review_method_display = METHOD_DISPLAY_NAMES[selected_review_method]
 
 response_review_needed = "전체"
+#---------------------------------------------------------------------------------------------------------
+# 사이드바 - 휴먼검수 판정 필터
+#---------------------------------------------------------------------------------------------------------
 response_review_status = "전체"
 scope_label = selected_review_method_display
 if selected_review_method == HUMAN_REVIEW_METHOD:
@@ -1390,6 +1477,9 @@ if selected_review_method == HUMAN_REVIEW_METHOD:
         )
     scope_label = f"{selected_review_method_display} · {status_labels[response_review_status]}"
 
+#---------------------------------------------------------------------------------------------------------
+# 사이드바 - 검수 상태 및 오류 유형 필터
+#---------------------------------------------------------------------------------------------------------
 completion_options = ["전체", "미완료", "완료"]
 if st.session_state.get(completion_widget_key) not in completion_options:
     st.session_state[completion_widget_key] = "전체"
@@ -1405,6 +1495,9 @@ if filter_by_type:
     selected_types = multi_select_filter("오류유형", ERROR_TYPES, ERROR_TYPES, ERROR_TYPE_NAMES.get, error_type_prefix)
 selected_rules = rules_for_error_types(selected_types)
 
+#---------------------------------------------------------------------------------------------------------
+# 사이드바 - 우선 검수 개체 선택
+#---------------------------------------------------------------------------------------------------------
 priority_entity = select_review_entity((
     selected_press, tuple(press_versions[selected_press]), selected_types,
     selected_review_method, authenticated_assignee, search_text,
@@ -1477,6 +1570,9 @@ filter_key = (
     selected_press,
     selected_review_method_display,
     selected_types,
+#---------------------------------------------------------------------------------------------------------
+# 화면 설정 - 조회 조건별 페이지 위치 및 사이드바 서식
+#---------------------------------------------------------------------------------------------------------
     selected_rules,
     search_text,
     response_review_needed,
@@ -1556,9 +1652,9 @@ st.sidebar.markdown(
     unsafe_allow_html=True,
 )
 
-# -----------------------------------------------------------------------------
+#---------------------------------------------------------------------------------------------------------
 # 선택 조건에 해당하는 문장 조회
-# -----------------------------------------------------------------------------
+#---------------------------------------------------------------------------------------------------------
 try:
     rows, filtered_article_count, press_article_count, final_errors = fetch_rule_results(
         selected_press,
@@ -1580,6 +1676,9 @@ except Exception as exc:
 
 grouped = group_sentences(rows, selected_rules)
 
+#---------------------------------------------------------------------------------------------------------
+# 데이터 가공 - 기사별 문장 및 데이터 버전 구성
+#---------------------------------------------------------------------------------------------------------
 # 조회 결과를 기사별로 묶기
 docs = {}
 for sentence_key, item in grouped.items():
@@ -1595,6 +1694,9 @@ if offset and not page_doc_ids:
     position["offset"] = max(0, (filtered_article_count - 1) // PAGE_SIZE * PAGE_SIZE)
     st.rerun()
 
+#---------------------------------------------------------------------------------------------------------
+# 화면 상태 - 현재 페이지 문장의 검수 상태 복원
+#---------------------------------------------------------------------------------------------------------
 # 현재 페이지에 실제 표시되는 문장의 임시 검수 상태와 수정문을 초기화한다.
 visible_sentence_keys = [
     sentence_key
@@ -1613,9 +1715,9 @@ for sentence_key in visible_sentence_keys:
     # text_area 위젯은 기사 전환 시 제거될 수 있으므로 매 렌더링마다 영속 상태에서 복원한다.
     st.session_state[modified_key] = st.session_state[value_key]
 
-# -----------------------------------------------------------------------------
+#---------------------------------------------------------------------------------------------------------
 # 좌측 사이드바 - 검수 기사 목록 및 페이지 이동
-# -----------------------------------------------------------------------------
+#---------------------------------------------------------------------------------------------------------
 page_sentence_keys = visible_sentence_keys
 all_page_completed = bool(page_sentence_keys) and all(
     st.session_state.get(review_widget_key("review_status", sentence_key)) == "완료"
@@ -1670,6 +1772,9 @@ else:
     # st.sidebar.info("조건에 해당하는 기사가 없습니다.")
     st.info("현재 조회 조건에 맞는 배정 기사가 없습니다.")
 
+#---------------------------------------------------------------------------------------------------------
+# 사이드바 - 기사 목록 서식 및 페이지 이동
+#---------------------------------------------------------------------------------------------------------
 # 페이지 이동 영역
 st.sidebar.markdown(
     """
@@ -1750,9 +1855,9 @@ with next_col:
         on_click=lambda: position.update(offset=offset + PAGE_SIZE),
     )
 
-# -----------------------------------------------------------------------------
+#---------------------------------------------------------------------------------------------------------
 # 본문 - 선택한 기사에 포함된 문장 표시
-# -----------------------------------------------------------------------------
+#---------------------------------------------------------------------------------------------------------
 def rule_result_html(rules):
     return "".join(
         '<div style="font-size:13px; padding:2px 0;">'
@@ -1762,6 +1867,9 @@ def rule_result_html(rules):
     )
 
 
+#---------------------------------------------------------------------------------------------------------
+# 본문 구성 - 검수 사유 및 수정 제안 범위
+#---------------------------------------------------------------------------------------------------------
 def review_reason_text(response):
     messages = [
         RESPONSE_ERROR_MESSAGES[response[key]]
@@ -1804,6 +1912,9 @@ def proposal_source_range(form, position, corrected):
     return windows[0] if len(windows) == 1 else position
 
 
+#---------------------------------------------------------------------------------------------------------
+# 본문 구성 - 문장별 검수 참고 정보 생성
+#---------------------------------------------------------------------------------------------------------
 def build_review_references(item):
     """표시 내용이 같은 개체 행을 한 항목으로 묶고 각 행의 원문 위치를 보존한다."""
     form = item["original_form"] or ""
@@ -1858,6 +1969,9 @@ def build_review_references(item):
     return references, fallback_matches
 
 
+#---------------------------------------------------------------------------------------------------------
+# 본문 구성 - 수정 제안 및 상세 사유 표시
+#---------------------------------------------------------------------------------------------------------
 def render_response_results(references, reference_key):
     entries = []
     for number, reference in enumerate(references, start=1):
@@ -1881,6 +1995,9 @@ def render_response_results(references, reference_key):
         st.markdown("".join(entries), unsafe_allow_html=True)
 
 
+#---------------------------------------------------------------------------------------------------------
+# 본문 구성 - 원문 및 수정문과 참고 정보 배치
+#---------------------------------------------------------------------------------------------------------
 def render_sentence_layout(idx, sentence_key, item, sentence_id, matches, decision_highlights):
     status_key = review_widget_key("review_status", sentence_key)
     modified_key = review_widget_key("modified_form", sentence_key)
@@ -1965,6 +2082,9 @@ def render_sentence_layout(idx, sentence_key, item, sentence_id, matches, decisi
         </style>
     """)
 
+    #---------------------------------------------------------------------------------------------------------
+    # 문장 검수 - 상태 및 원문 표시
+    #---------------------------------------------------------------------------------------------------------
     edit_col, rule_col = st.columns([3, 1])
     with edit_col:
         with st.container(border=True, height="content", key=edit_key):
@@ -2106,6 +2226,9 @@ def render_sentence_layout(idx, sentence_key, item, sentence_id, matches, decisi
             if not visible_rule_matches and not has_decision_result(decision) and not references:
                 st.caption("해당 없음")
 
+#---------------------------------------------------------------------------------------------------------
+# 본문 - 선택 기사 확인 및 표시 범위 설정
+#---------------------------------------------------------------------------------------------------------
 if selected_doc_key is None:
     st.info("좌측 사이드바에서 기사를 선택하면 검수 대상 문장이 표시됩니다.")
 
@@ -2153,6 +2276,9 @@ else:
         display_grouped = grouped
         selected_sentence_keys = docs[selected_doc_key]
 
+    #---------------------------------------------------------------------------------------------------------
+    # 본문 - 표시할 문장의 수정 상태 복원
+    #---------------------------------------------------------------------------------------------------------
     for sentence_key in selected_sentence_keys:
         item = display_grouped[sentence_key]
         status_key = review_widget_key("review_status", sentence_key)
@@ -2169,6 +2295,9 @@ else:
     try:
         response_results = fetch_response_results(
             selected_doc_key[0],
+    #---------------------------------------------------------------------------------------------------------
+    # 본문 - 검수 참고 정보 조회 및 연결
+    #---------------------------------------------------------------------------------------------------------
             selected_press,
             selected_doc_id,
             response_review_needed,
@@ -2187,6 +2316,9 @@ else:
         # 이미 조회한 현재 페이지의 배정 문장만 사용해 전체 데이터 적재와 숨은 변경을 피한다.
         batch_grouped = grouped
         batch_sentence_keys = list(batch_grouped)
+    #---------------------------------------------------------------------------------------------------------
+    # 일괄처리 - 현재 페이지 대상 및 저장 대기 문장 구성
+    #---------------------------------------------------------------------------------------------------------
         pending_sentence_keys = [
             key for key in batch_sentence_keys
             if st.session_state.get(review_widget_key("batch_pending", key)) == filter_key
@@ -2256,7 +2388,10 @@ else:
                             "일괄처리 결과를 DB에 저장했습니다."
                         )
                         st.rerun()
-    # 문장별 검수 영역
+
+    #---------------------------------------------------------------------------------------------------------
+    # 본문 - 문장별 검수 영역 표시
+    #---------------------------------------------------------------------------------------------------------
     for idx, sentence_key in enumerate(selected_sentence_keys, start=1):
         item = display_grouped[sentence_key]
         sentence_id = item["sentence_id"]

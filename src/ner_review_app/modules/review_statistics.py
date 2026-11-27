@@ -1,11 +1,17 @@
+# -*- coding: utf-8 -*-
 """검수 현황 조회와 캐시. 검수 저장 후에는 현황 캐시만 갱신한다."""
+#---------------------------------------------------------------------------------------------------------
+# 기본 설정 - 라이브러리 및 검수 집계 모듈
+#---------------------------------------------------------------------------------------------------------
 import pandas as pd
 import streamlit as st
-
 from src.config.postgredb import get_postgre_connect
 from src.ner_review_app.modules.review_targets import HUMAN_REVIEW_METHOD, REVIEW_SCOPE_CTES
 
 
+#---------------------------------------------------------------------------------------------------------
+# 기능 - 쿼리 결과의 데이터프레임 변환
+#---------------------------------------------------------------------------------------------------------
 def _fetch_dataframe(cursor, query, params=None):
     cursor.execute(query, params)
     rows = cursor.fetchall()
@@ -13,6 +19,9 @@ def _fetch_dataframe(cursor, query, params=None):
     return pd.DataFrame(rows, columns=columns)
 
 
+#---------------------------------------------------------------------------------------------------------
+# 데이터 조회 - 언론사별 원본 기사 수
+#---------------------------------------------------------------------------------------------------------
 @st.cache_data(ttl=3600, show_spinner=False)
 def load_original_counts():
     with get_postgre_connect() as connection, connection.cursor() as cursor:
@@ -22,8 +31,14 @@ def load_original_counts():
         """)
 
 
+#---------------------------------------------------------------------------------------------------------
+# 데이터 조회 - 검수 현황 및 담당자 배정 집계
+#---------------------------------------------------------------------------------------------------------
 @st.cache_data(ttl=900, show_spinner=False)
 def load_review_data():
+    #---------------------------------------------------------------------------------------------------------
+    # 집계 쿼리 - 검수방식별 대상 및 완료 기사
+    #---------------------------------------------------------------------------------------------------------
     method_query = f"""
         WITH {REVIEW_SCOPE_CTES}, method_articles AS (
             SELECT s.press, s.doc_id, s.review_method,
@@ -47,6 +62,9 @@ def load_review_data():
         FROM method_articles LEFT JOIN rule_counts USING (press)
         GROUP BY press, review_method, rule_count, rule_error_count, rule_normal_count ORDER BY press, review_method
     """
+    #---------------------------------------------------------------------------------------------------------
+    # 집계 쿼리 - 원천 판정 기준 교차 확인
+    #---------------------------------------------------------------------------------------------------------
     # 원천 개체 오류에서 출발하는 역방향 집계로 대상 누락, 중복, 부분 완료 오집계를 확인한다.
     check_query = """
         WITH evidence AS (
@@ -72,6 +90,9 @@ def load_review_data():
                COUNT(*) FILTER (WHERE completed) AS completed_count, SUM(error_sentences) AS error_sentences
         FROM checked_articles GROUP BY press
     """
+    #---------------------------------------------------------------------------------------------------------
+    # 집계 쿼리 - 언론사 및 담당자별 배정 기사
+    #---------------------------------------------------------------------------------------------------------
     assignment_query = """
         SELECT
             COALESCE(press, '미상') AS press,
@@ -86,6 +107,9 @@ def load_review_data():
         ORDER BY press, assignee, review_method
     """
 
+    #---------------------------------------------------------------------------------------------------------
+    # 데이터 조회 - 동일 시점의 검수 현황 및 배정 결과
+    #---------------------------------------------------------------------------------------------------------
     with get_postgre_connect() as connection:
         with connection.cursor() as cursor:
             cursor.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
@@ -93,6 +117,9 @@ def load_review_data():
             expected = _fetch_dataframe(cursor, check_query, (HUMAN_REVIEW_METHOD,))
             assignments = _fetch_dataframe(cursor, assignment_query)
 
+    #---------------------------------------------------------------------------------------------------------
+    # 집계 확인 - 원천 판정과 현황 집계의 일치 여부
+    #---------------------------------------------------------------------------------------------------------
     human = methods[methods["review_method"] == HUMAN_REVIEW_METHOD].set_index("press")
     rules = methods.groupby("press")[["rule_count", "rule_error_count", "rule_normal_count"]].max()
     expected = expected.set_index("press").sort_index()
@@ -102,6 +129,9 @@ def load_review_data():
     if not actual.sort_index().astype("int64").equals(expected.astype("int64")):
         raise ValueError("언론사별 오류·정상·완료 기사 수 또는 오류 문장 수가 원천 판정과 다릅니다.")
 
+    #---------------------------------------------------------------------------------------------------------
+    # 집계 구성 - 언론사별 원본 및 검수 진행 현황
+    #---------------------------------------------------------------------------------------------------------
     summary = load_original_counts().set_index("press")
     summary = summary.join(rules, how="outer")
     for method, column in (("일괄처리", "batch_count"), ("휴먼검수", "martial_count")):
@@ -114,6 +144,9 @@ def load_review_data():
     return {"summary": summary.sort_index().reset_index(), "methods": methods, "assignments": assignments}
 
 
+#---------------------------------------------------------------------------------------------------------
+# 기능 - 검수 현황 조회 캐시 초기화
+#---------------------------------------------------------------------------------------------------------
 def refresh_dashboard():
     load_original_counts.clear()
     load_review_data.clear()

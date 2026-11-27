@@ -1,15 +1,26 @@
+# -*- coding: utf-8 -*-
 """검수 화면들이 공유하는 개체 목록 조회·선택 영역."""
+#---------------------------------------------------------------------------------------------------------
+# 기본 설정 - 라이브러리 및 개체명 목록 모듈
+#---------------------------------------------------------------------------------------------------------
 import hashlib
-
 import streamlit as st
-
 from src.ner_review_app.modules.entity_catalog import catalog_ready
 
 
+#---------------------------------------------------------------------------------------------------------
+# 기본 설정 - 개체 목록 페이지 크기
+#---------------------------------------------------------------------------------------------------------
 ENTITY_PAGE_SIZE = 30
 
 
+#---------------------------------------------------------------------------------------------------------
+# 화면 - 개체 목록 조회 및 선택 필터
+#---------------------------------------------------------------------------------------------------------
 def render_entity_filter(scope, load_page, key_prefix, inline_results=False):
+    #---------------------------------------------------------------------------------------------------------
+    # 개체 필터 - 조회 범위 변경 및 사용 여부에 따른 상태 초기화
+    #---------------------------------------------------------------------------------------------------------
     if st.session_state.get(f"{key_prefix}_scope") != scope:
         st.session_state[f"{key_prefix}_scope"] = scope
         st.session_state[f"{key_prefix}_selected"] = None
@@ -23,6 +34,9 @@ def render_entity_filter(scope, load_page, key_prefix, inline_results=False):
         st.session_state[f"{key_prefix}_starts"] = [None]
         return None
 
+    #---------------------------------------------------------------------------------------------------------
+    # 개체 필터 - 검색창 및 선택 위젯 서식
+    #---------------------------------------------------------------------------------------------------------
     root_key = f"{key_prefix}_filter"
     st.html(f"""
         <style>
@@ -40,6 +54,9 @@ def render_entity_filter(scope, load_page, key_prefix, inline_results=False):
         </style>
     """)
     with st.sidebar.container(key=root_key):
+        #---------------------------------------------------------------------------------------------------------
+        # 개체 필터 - 개체명 목록 준비 상태 확인
+        #---------------------------------------------------------------------------------------------------------
         try:
             ready = catalog_ready()
         except Exception:
@@ -48,6 +65,9 @@ def render_entity_filter(scope, load_page, key_prefix, inline_results=False):
         if not ready:
             st.info("개체명목록 화면에서 초기 준비를 완료한 뒤 사용할 수 있습니다.")
             return None
+        #---------------------------------------------------------------------------------------------------------
+        # 개체 필터 - 검색어 및 출현빈도 정렬 조건 입력
+        #---------------------------------------------------------------------------------------------------------
         with st.form(f"{key_prefix}_search", border=not inline_results):
             term = st.text_input(
                 "개체명·분류 검색", placeholder="개체명 또는 분류의 일부 입력",
@@ -61,6 +81,9 @@ def render_entity_filter(scope, load_page, key_prefix, inline_results=False):
                 st.session_state[f"{key_prefix}_query"] = (term, order)
                 st.session_state[f"{key_prefix}_starts"] = [None]
 
+        #---------------------------------------------------------------------------------------------------------
+        # 개체 필터 - 조회 결과 표시 및 검수 개체 선택
+        #---------------------------------------------------------------------------------------------------------
         query = st.session_state[f"{key_prefix}_query"]
         if query is not None:
             starts = st.session_state[f"{key_prefix}_starts"]
@@ -84,6 +107,9 @@ def render_entity_filter(scope, load_page, key_prefix, inline_results=False):
                             st.session_state[f"{key_prefix}_selected"] = entities[choice]
                     else:
                         st.info("조건에 맞는 개체가 없습니다.")
+                    #---------------------------------------------------------------------------------------------------------
+                    # 개체 필터 - 조회 결과 페이지 이동
+                    #---------------------------------------------------------------------------------------------------------
                     previous, following = st.columns(2, gap="small")
                     if previous.button("이전", key=f"{key_prefix}_previous", disabled=len(starts) == 1, width="stretch"):
                         starts.pop()
@@ -95,6 +121,9 @@ def render_entity_filter(scope, load_page, key_prefix, inline_results=False):
                 except Exception:
                     st.warning("개체 목록을 불러오지 못했습니다. 검색어를 더 구체적으로 입력해 주세요.")
 
+        #---------------------------------------------------------------------------------------------------------
+        # 개체 필터 - 적용 중인 개체 표시 및 선택 해제
+        #---------------------------------------------------------------------------------------------------------
         selected = st.session_state[f"{key_prefix}_selected"]
         if selected:
             st.caption(f"적용 중: {selected['entity_name']} · {selected['entity_type']} · 전체 {selected['mention_count']:,}회")

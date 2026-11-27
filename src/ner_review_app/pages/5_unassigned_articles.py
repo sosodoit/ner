@@ -18,11 +18,9 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.ner_review_app.modules.postgredb import get_postgre_connect
-from src.ner_review_app.modules.entity_catalog import entity_search_pattern
 from src.ner_review_app.modules.entity_filter import ENTITY_PAGE_SIZE, render_entity_filter
-from src.ner_review_app.pages._article_list_state import (
-    get_article_list_state, remember_article_filters, render_article_selector,
-)
+from src.ner_review_app.modules.entity_catalog import entity_search_pattern
+from src.ner_review_app.modules._article_list_state import get_article_list_state, remember_article_filters, render_article_selector
 
 
 #---------------------------------------------------------------------------------------------------------

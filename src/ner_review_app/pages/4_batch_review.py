@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """일괄처리 검수 화면."""
 
 import runpy

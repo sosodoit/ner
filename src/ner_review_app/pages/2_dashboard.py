@@ -17,9 +17,10 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.config.postgredb import get_postgre_connect
+from src.ner_review_app.modules.review_rows import load_review_rows
 from src.ner_review_app.modules.review_targets import METHOD_DISPLAY_NAMES
 from src.ner_review_app.modules.review_statistics import load_review_data, refresh_dashboard
-from src.ner_review_app.modules.review_rows import load_review_rows
+
 
 #---------------------------------------------------------------------------------------------------------
 # 기본 설정 - 검수 방식 및 환경 변수

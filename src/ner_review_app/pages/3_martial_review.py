@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """계엄기사 검수 화면."""
 
 import runpy
